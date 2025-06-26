@@ -82,7 +82,7 @@ if not API_KEY:
 
 BASE_URL = (
     'http://openapi.molit.go.kr:8081/OpenAPI_ToolInstallPackage/'
-    'service/rest/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
+    'service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev'
 )
 
 def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame:
