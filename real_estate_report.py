@@ -26,31 +26,39 @@ if not API_KEY:
 
 # ── 3) 행정안전부 법정동 코드 조회(OpenAPI) ──
 def fetch_region_codes():
-    url = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
+    # API endpoint 및 파라미터
+    url = 'https://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
     params = {
         'serviceKey': API_KEY,
         'numOfRows':  10000,
         'pageNo':     1,
-        'resultType': 'json'
+        'resultType': 'JSON'
     }
     resp = requests.get(url, params=params)
     resp.raise_for_status()
-    data = resp.json()['response']['body']['items']
-    items = data['item'] if isinstance(data, dict) else data
-    return items
+    # JSON 응답 시도
+    try:
+        body = resp.json()['response']['body']['items']
+        items = body['item'] if isinstance(body, dict) else body
+        return items
+    except Exception:
+        # JSON 파싱 실패 시 XML로 fallback
+        df = pd.read_xml(resp.content, xpath='//item')
+        # DataFrame to list of dict
+        return df.to_dict(orient='records')
 
 # ── 4) region_code 결정 ──
 if args.lawd_cd:
     region_code = args.lawd_cd
 else:
     items = fetch_region_codes()
-    # JSON 필드명은 stdReginNm=지역명, stdReginCd=코드
+    # JSON 필드명: stdReginNm=지역명, stdReginCd=코드
     matches = [i for i in items if i.get('stdReginNm') == args.region_name]
     if not matches:
         print(f"ERROR: '{args.region_name}'에 해당하는 코드가 없습니다.")
         sys.exit(1)
-    # 읍면동 단위 우선
-    region_code = matches[0]['stdReginCd']
+    # 가장 상세한 단위(읍면동) 우선
+    region_code = matches[0].get('stdReginCd') or matches[0].get('sggCd') or matches[0].get('siDoCd')
 
 start_year  = args.start_year
 built_after = args.built_after
@@ -74,8 +82,7 @@ def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int, num_of_rows: in
     resp = requests.get(BASE_URL, params=params)
     resp.raise_for_status()
     # XML 응답을 pandas.read_xml로 파싱
-    df = pd.read_xml(resp.content, xpath='//item')
-    return df
+    return pd.read_xml(resp.content, xpath='//item')
 
 # ── 7) 전체 기간 조회 ──
 records = []
