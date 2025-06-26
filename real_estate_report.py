@@ -3,56 +3,14 @@
 
 import os
 import sys
-import io
-import zipfile
 import requests
 import pandas as pd
 from datetime import datetime
 import argparse
 
-# ── 0) 시도·시군구 코드 CSV 자동 생성/갱신 ──
-CODES_CSV = "korea_sido_sigungu_codes_latest.csv"
-ZIP_URL   = (
-    "https://files.data.go.kr/fileData.do?file_id=15063424&node_id=FILE_0000000"
-)
-
-def update_region_codes():
-    # CSV 파일이 없으면 다운로드하여 생성
-    if os.path.exists(CODES_CSV):
-        return
-    print("지역 코드 CSV를 다운로드하여 생성합니다…")
-    r = requests.get(ZIP_URL, timeout=60)
-    r.raise_for_status()
-    zf = zipfile.ZipFile(io.BytesIO(r.content))
-    # CSV 파일 찾기
-    name = next(n for n in zf.namelist() if n.lower().endswith('.csv'))
-    df_codes = pd.read_csv(zf.open(name), encoding='euc-kr')
-    # 코드 가공
-    df_codes['코드'] = df_codes['법정동코드'].astype(str).str.zfill(10)
-    df_codes['시도코드'] = df_codes['코드'].str[:2]
-    df_codes['시군구코드'] = df_codes['코드'].str[:5]
-    # 대표 레벨만 추출
-    sido    = df_codes[df_codes['코드'].str[2:] == '00000000'][['시도코드','법정동명']]
-    sigungu = df_codes[(df_codes['코드'].str[5:] == '00000') & (df_codes['코드'].str[2:5] != '000')][['시군구코드','법정동명']]
-    out = (
-        sido.rename(columns={'시도코드':'code','법정동명':'name'})
-            .assign(level='sido')
-            .append(
-                sigungu.rename(columns={'시군구코드':'code','법정동명':'name'})
-                       .assign(level='sigungu'),
-                ignore_index=True
-            )
-    )
-    out.to_csv(CODES_CSV, index=False, encoding='utf-8-sig')
-    print(f"'{CODES_CSV}' 생성 완료")
-
-# 지역 코드 CSV 갱신/로딩
-update_region_codes()
-codes_df = pd.read_csv(CODES_CSV)
-
 # ── 1) 파서 설정 ──
 parser = argparse.ArgumentParser(description="공공데이터 실거래 리포트 생성기")
-group  = parser.add_mutually_exclusive_group(required=True)
+group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('--lawd-cd',     help='법정동코드(LAWD_CD), 예: 34110330')
 group.add_argument('--region-name', help='지역명 입력(시도 또는 시군구), 예: 천안시 동남구')
 parser.add_argument('--start-year',  type=int, default=2020, help='조회 시작 연도(YYYY)')
@@ -60,36 +18,51 @@ parser.add_argument('--built-after', type=int, default=2015, help='준공 연도
 parser.add_argument('--output',      default='report.xlsx', help='저장할 엑셀 파일명')
 args = parser.parse_args()
 
-# ── 2) 지역명 → 법정동코드 매핑 ──
-if args.lawd_cd:
-    region_code = args.lawd_cd
-else:
-    match = codes_df[codes_df['name'] == args.region_name]
-    if match.empty:
-        print(f"ERROR: '{args.region_name}'에 해당하는 코드가 없습니다.")
-        sys.exit(1)
-    # 시군구 우선, 없으면 시도
-    if 'sigungu' in match['level'].values:
-        region_code = match[match['level']=='sigungu']['code'].iloc[0]
-    else:
-        region_code = match['code'].iloc[0]
-
-start_year  = args.start_year
-built_after = args.built_after
-output_file = args.output
-
-# ── 3) API 키 확인 ──
+# ── 2) API 키 확인 ──
 API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not API_KEY:
     print("ERROR: 환경변수 PUBLIC_DATA_API_KEY에 API 키를 설정하세요.")
     sys.exit(1)
 
+# ── 3) 행정안전부 법정동 코드 조회(OpenAPI) ──
+def fetch_region_codes():
+    url = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
+    params = {
+        'serviceKey': API_KEY,
+        'numOfRows':  10000,
+        'pageNo':     1,
+        'resultType': 'json'
+    }
+    resp = requests.get(url, params=params)
+    resp.raise_for_status()
+    data = resp.json()['response']['body']['items']
+    items = data['item'] if isinstance(data, dict) else data
+    return items
+
+# ── 4) region_code 결정 ──
+if args.lawd_cd:
+    region_code = args.lawd_cd
+else:
+    items = fetch_region_codes()
+    # JSON 필드명은 stdReginNm=지역명, stdReginCd=코드
+    matches = [i for i in items if i.get('stdReginNm') == args.region_name]
+    if not matches:
+        print(f"ERROR: '{args.region_name}'에 해당하는 코드가 없습니다.")
+        sys.exit(1)
+    # 읍면동 단위 우선
+    region_code = matches[0]['stdReginCd']
+
+start_year  = args.start_year
+built_after = args.built_after
+output_file = args.output
+
+# ── 5) 거래정보 API 엔드포인트 ──
 BASE_URL = (
     'http://openapi.molit.go.kr:8081/OpenAPI_ToolInstallPackage/'
     'service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
 )
 
-# ── 4) 데이터 수집 함수 ──
+# ── 6) 거래 데이터 수집 함수 ──
 def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int, num_of_rows: int = 1000) -> pd.DataFrame:
     params = {
         'serviceKey': API_KEY,
@@ -100,10 +73,11 @@ def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int, num_of_rows: in
     }
     resp = requests.get(BASE_URL, params=params)
     resp.raise_for_status()
+    # XML 응답을 pandas.read_xml로 파싱
     df = pd.read_xml(resp.content, xpath='//item')
     return df
 
-# ── 5) 전체 기간 조회 ──
+# ── 7) 전체 기간 조회 ──
 records = []
 current_year = datetime.now().year
 for year in range(start_year, current_year + 1):
@@ -114,7 +88,7 @@ for year in range(start_year, current_year + 1):
             df = fetch_transactions(region_code, deal_ym, page)
             if df.empty:
                 break
-            # 준공 연도 필터
+            # 건축년도 필터
             if '건축년도' in df.columns:
                 df = df[df['건축년도'].astype(int) >= built_after]
             if df.empty:
@@ -126,7 +100,7 @@ if not records:
     print("조건에 맞는 거래 데이터가 없습니다.")
     sys.exit(0)
 
-# ── 6) 데이터 병합 및 가공 ──
+# ── 8) 데이터 병합 및 가공 ──
 all_data = pd.concat(records, ignore_index=True)
 if '년월' in all_data.columns:
     all_data['거래년월'] = pd.to_datetime(all_data['년월'], format='%Y%m')
@@ -147,7 +121,7 @@ agg = (
     .reset_index()
 )
 
-# ── 7) 엑셀 저장 ──
+# ── 9) 엑셀 저장 ──
 with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
     agg.to_excel(writer, sheet_name='연도별집계', index=False)
 
