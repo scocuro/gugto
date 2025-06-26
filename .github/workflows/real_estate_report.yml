@@ -2,7 +2,8 @@ name: 공공데이터 실거래 리포트
 
 on:
   workflow_dispatch:
-
+  schedule:
+    - cron: '0 0 * * *'    # you can leave this here or change/remove later
 
 jobs:
   build:
