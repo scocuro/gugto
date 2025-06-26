@@ -26,8 +26,8 @@ if not API_KEY:
 
 # ── 3) 행정안전부 법정동 코드 조회(OpenAPI) ──
 def fetch_region_codes():
-    # API endpoint 및 파라미터
-    url = 'https://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
+    # HTTP로 호출하여 SSL 이슈 방지
+    url = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
     params = {
         'serviceKey': API_KEY,
         'numOfRows':  10000,
@@ -36,7 +36,7 @@ def fetch_region_codes():
     }
     resp = requests.get(url, params=params)
     resp.raise_for_status()
-    # JSON 응답 시도
+    # JSON 응답 파싱
     try:
         body = resp.json()['response']['body']['items']
         items = body['item'] if isinstance(body, dict) else body
@@ -44,7 +44,6 @@ def fetch_region_codes():
     except Exception:
         # JSON 파싱 실패 시 XML로 fallback
         df = pd.read_xml(resp.content, xpath='//item')
-        # DataFrame to list of dict
         return df.to_dict(orient='records')
 
 # ── 4) region_code 결정 ──
@@ -52,13 +51,11 @@ if args.lawd_cd:
     region_code = args.lawd_cd
 else:
     items = fetch_region_codes()
-    # JSON 필드명: stdReginNm=지역명, stdReginCd=코드
     matches = [i for i in items if i.get('stdReginNm') == args.region_name]
     if not matches:
         print(f"ERROR: '{args.region_name}'에 해당하는 코드가 없습니다.")
         sys.exit(1)
-    # 가장 상세한 단위(읍면동) 우선
-    region_code = matches[0].get('stdReginCd') or matches[0].get('sggCd') or matches[0].get('siDoCd')
+    region_code = matches[0].get('stdReginCd')
 
 start_year  = args.start_year
 built_after = args.built_after
@@ -81,7 +78,6 @@ def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int, num_of_rows: in
     }
     resp = requests.get(BASE_URL, params=params)
     resp.raise_for_status()
-    # XML 응답을 pandas.read_xml로 파싱
     return pd.read_xml(resp.content, xpath='//item')
 
 # ── 7) 전체 기간 조회 ──
@@ -95,7 +91,6 @@ for year in range(start_year, current_year + 1):
             df = fetch_transactions(region_code, deal_ym, page)
             if df.empty:
                 break
-            # 건축년도 필터
             if '건축년도' in df.columns:
                 df = df[df['건축년도'].astype(int) >= built_after]
             if df.empty:
@@ -113,9 +108,7 @@ if '년월' in all_data.columns:
     all_data['거래년월'] = pd.to_datetime(all_data['년월'], format='%Y%m')
     all_data['year'] = all_data['거래년월'].dt.year
 if {'전용면적','거래금액'}.issubset(all_data.columns):
-    all_data['unit_price'] = (
-        all_data['거래금액'].astype(float) / all_data['전용면적'].astype(float)
-    )
+    all_data['unit_price'] = all_data['거래금액'].astype(float) / all_data['전용면적'].astype(float)
 
 agg = (
     all_data
