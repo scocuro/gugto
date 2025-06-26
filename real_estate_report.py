@@ -25,37 +25,44 @@ if not API_KEY:
     sys.exit(1)
 
 # ── 3) 행정안전부 법정동 코드 조회(OpenAPI) ──
+REGION_API_URL = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
+
 def fetch_region_codes():
-    # HTTP로 호출하여 SSL 이슈 방지
-    url = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
-    params = {
-        'serviceKey': API_KEY,
-        'numOfRows':  10000,
-        'pageNo':     1,
-        'resultType': 'JSON'
-    }
-    resp = requests.get(url, params=params)
-    resp.raise_for_status()
-    # JSON 응답 파싱
     try:
-        body = resp.json()['response']['body']['items']
-        items = body['item'] if isinstance(body, dict) else body
-        return items
-    except Exception:
-        # JSON 파싱 실패 시 XML로 fallback
-        df = pd.read_xml(resp.content, xpath='//item')
-        return df.to_dict(orient='records')
+        params = {'serviceKey': API_KEY, 'numOfRows': 10000, 'pageNo': 1, 'resultType': 'json'}
+        resp = requests.get(REGION_API_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        text = resp.text.strip()
+        # JSON 응답 처리
+        if text.startswith('{'):
+            body = resp.json().get('response', {}).get('body', {}).get('items', {})
+            items = body.get('item') if isinstance(body, dict) else body or []
+            if items:
+                return items
+        # JSON이 아니거나 비어있으면 XML 파싱
+        df = pd.read_xml(resp.content, xpath='//item', parser='etree')
+        if not df.empty:
+            return df.to_dict(orient='records')
+    except Exception as e:
+        print(f"WARNING: 지역 코드 조회 실패: {e}")
+    return []
 
 # ── 4) region_code 결정 ──
 if args.lawd_cd:
     region_code = args.lawd_cd
 else:
     items = fetch_region_codes()
-    matches = [i for i in items if i.get('stdReginNm') == args.region_name]
+    if not items:
+        print(f"ERROR: 지역명 '{args.region_name}' 변환을 위한 코드 목록을 가져오지 못했습니다.")
+        sys.exit(1)
+    # 부분 일치(normalized) 비교
+    def norm(s): return s.replace(' ', '').lower()
+    name_input = norm(args.region_name)
+    matches = [i for i in items if name_input in norm(i.get('stdReginNm', ''))]
     if not matches:
         print(f"ERROR: '{args.region_name}'에 해당하는 코드가 없습니다.")
         sys.exit(1)
-    region_code = matches[0].get('stdReginCd')
+    region_code = matches[0].get('stdReginCd') or matches[0].get('sggCd') or matches[0].get('siDoCd')
 
 start_year  = args.start_year
 built_after = args.built_after
@@ -69,16 +76,16 @@ BASE_URL = (
 
 # ── 6) 거래 데이터 수집 함수 ──
 def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int, num_of_rows: int = 1000) -> pd.DataFrame:
-    params = {
-        'serviceKey': API_KEY,
-        'LAWD_CD':    lawd_cd,
-        'DEAL_YMD':   deal_ym,
-        'pageNo':     page_no,
-        'numOfRows':  num_of_rows,
-    }
-    resp = requests.get(BASE_URL, params=params)
-    resp.raise_for_status()
-    return pd.read_xml(resp.content, xpath='//item')
+    try:
+        params = {'serviceKey': API_KEY, 'LAWD_CD': lawd_cd, 'DEAL_YMD': deal_ym,
+                  'pageNo': page_no, 'numOfRows': num_of_rows}
+        resp = requests.get(BASE_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        df = pd.read_xml(resp.content, xpath='//item', parser='etree')
+        return df
+    except Exception as e:
+        print(f"WARNING: 거래 데이터 {deal_ym} 호출 실패: {e}")
+        return pd.DataFrame()
 
 # ── 7) 전체 기간 조회 ──
 records = []
@@ -113,11 +120,8 @@ if {'전용면적','거래금액'}.issubset(all_data.columns):
 agg = (
     all_data
     .groupby(['법정동','단지명','year'], dropna=False)
-    .agg(
-        avg_price=('거래금액','mean'),
-        count=('거래금액','size'),
-        avg_unit_price=('unit_price','mean')
-    )
+    .agg(avg_price=('거래금액','mean'), count=('거래금액','size'),
+         avg_unit_price=('unit_price','mean'))
     .reset_index()
 )
 
