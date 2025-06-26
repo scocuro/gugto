@@ -1,0 +1,41 @@
+name: 공공데이터 실거래 리포트
+
+on:
+  workflow_dispatch:
+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v3
+
+      - name: 파이썬 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 리포트 실행
+        env:
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+        run: |
+          python real_estate_report.py \
+            --region "천안시 동남구" \
+            --start-year 2020 \
+            --built-after 2015 \
+            --area-min 70 \
+            --area-max 80 \
+            --output cheonan_report.xlsx
+
+      - name: 결과 업로드
+        uses: actions/upload-artifact@v3
+        with:
+          name: cheonan_report
+          path: cheonan_report.xlsx
