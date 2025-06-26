@@ -1,13 +1,14 @@
 name: 공공데이터 실거래 리포트
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}      # 수동 실행을 위해 반드시 빈 객체로 명시
   schedule:
-    - cron: '0 0 * * *'    # you can leave this here or change/remove later
+    - cron: '0 0 * * *'      # 매일 UTC 00:00 (KST 09:00)에 자동 실행
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v3
@@ -22,10 +23,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 리포트 실행       ← 이 단계가 “run:” 블록입니다
+      - name: 리포트 실행
         env:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
-        run: |               ← 여기에 스크립트 실행 커맨드를 넣습니다
+        run: |
           python real_estate_report.py \
             --region-name "천안시 동남구" \
             --start-year 2020 \
@@ -35,5 +36,5 @@ jobs:
       - name: 결과 업로드
         uses: actions/upload-artifact@v4
         with:
-          name: report
-          path: report.xlsx
+          name: cheonan_report
+          path: cheonan_report.xlsx
