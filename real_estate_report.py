@@ -35,19 +35,30 @@ def fetch_region_codes():
         text = resp.text.strip()
         # JSON 응답 처리
         if text.startswith('{'):
-            body = resp.json().get('response', {}).get('body', {}).get('items', {})
-            items = body.get('item') if isinstance(body, dict) else body or []
+            data = resp.json().get('response', {}).get('body', {}).get('items', {})
+            items = data.get('item') if isinstance(data, dict) else data or []
             if items:
                 return items
-        # JSON이 아니거나 비어있으면 XML 파싱
-        df = pd.read_xml(resp.content, xpath='//item', parser='etree')
-        if not df.empty:
-            return df.to_dict(orient='records')
+        # JSON 파싱 실패 또는 빈 데이터인 경우 XML 직접 파싱
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(resp.content)
+        items = []
+        # namespace 무시하고 item 태그 찾기
+        for elem in root.findall('.//item'):
+            rec = {}
+            for child in list(elem):
+                tag = child.tag
+                # namespace 제거
+                if '}' in tag:
+                    tag = tag.split('}', 1)[1]
+                rec[tag] = child.text
+            items.append(rec)
+        return items
     except Exception as e:
         print(f"WARNING: 지역 코드 조회 실패: {e}")
-    return []
+        return []
 
-# ── 4) region_code 결정 ──
+# ── 4) region_code 결정 ── ──
 if args.lawd_cd:
     region_code = args.lawd_cd
 else:
