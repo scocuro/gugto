@@ -9,7 +9,7 @@ from datetime import datetime
 
 # ── 1) 시군구 코드 CSV 로드 ──
 #    사용하시는 CSV 파일 경로로 수정하세요.
-CSV_PATH = r"C:\Users\9074\code_raw.csv"
+CSV_PATH = "code_raw.csv"
 
 try:
     csv_df = pd.read_csv(CSV_PATH, encoding="utf-8", dtype=str)
