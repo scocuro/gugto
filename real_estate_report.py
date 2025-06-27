@@ -83,8 +83,8 @@ if not API_KEY:
 print(f"DEBUG: API_KEY length = {len(API_KEY)}")
 
 BASE_URL = (
-    'apis.data.go.kr/1613000/RTMSDataSvcAptTrade'
-    'service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
+    "https://apis.data.go.kr/1613000/"
+    "RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 )
 
 def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame:
