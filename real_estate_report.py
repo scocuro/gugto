@@ -7,7 +7,9 @@ real_estate_report.py
   • TLS1.2 고정 게이트웨이 호출
   • XML 네임스페이스 제거 후 파싱
   • 페이징으로 전체 Raw 레코드 수집
-  • 전처리 (컬럼명 매핑, 타입 변환, 건축년도 필터)
+  • 건축년도 필터
+  • 필요한 컬럼만 남기기
+  • 수집 건수 월별·총계 출력
   • Excel에 Raw Data 저장
 """
 
@@ -60,7 +62,7 @@ parser = argparse.ArgumentParser(description="공공데이터 실거래 Raw Data
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('--lawd-cd',     help='5자리 법정동(시군구) 코드 직접 입력')
 group.add_argument('--region-name', help='시도+시군구 명칭 (예: 충청남도 천안시 동남구)')
-parser.add_argument('--start-year',  type=int, default=2020, help='조회 시작 연도')
+parser.add_argument('--start-year',  type=int, default=2025, help='조회 시작 연도')
 parser.add_argument('--built-after', type=int, default=2015, help='준공 연도 이후 필터')
 parser.add_argument('--output',      default='raw_report.xlsx', help='출력 엑셀 파일명')
 args = parser.parse_args()
@@ -88,7 +90,6 @@ if not API_KEY:
 class TLS12Adapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         ctx = create_urllib3_context()
-        # 최소 TLS 1.2
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         kwargs['ssl_context'] = ctx
         return super().init_poolmanager(*args, **kwargs)
@@ -97,10 +98,18 @@ session = requests.Session()
 session.mount("https://", TLS12Adapter())
 
 BASE_URL = (
-    "http://apis.data.go.kr/1613000/"
+    "https://apis.data.go.kr/1613000/"
     "RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 )
 PAGE_SIZE = 1000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4) 수집 → 필요한 컬럼만 필터
+WANT_COLS = [
+    'sggCd', 'umdNm', 'aptNm', 'jibun',
+    'excluUseAr','dealYear','dealMonth','dealDay',
+    'dealAmount','floor','buildYear'
+]
 
 def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame:
     params = {
@@ -117,17 +126,48 @@ def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame
     text = resp.content.decode('utf-8')
     text = re.sub(r'\sxmlns="[^"]+"', '', text, count=1)
 
-    # DataFrame 반환
-    return pd.read_xml(text, xpath='.//item', parser='lxml')
+    df = pd.read_xml(text, xpath='.//item', parser='lxml')
+
+    # 컬럼명 한글 매핑
+    df.rename(columns={
+        'sggCd':       'sggCd',
+        'umdNm':       'umdNm',
+        'aptNm':       'aptNm',
+        'jibun':       'jibun',
+        'excluUseAr':  'excluUseAr',
+        'dealYear':    'dealYear',
+        'dealMonth':   'dealMonth',
+        'dealDay':     'dealDay',
+        'dealAmount':  'dealAmount',
+        'floor':       'floor',
+        'buildYear':   'buildYear',
+    }, inplace=True)
+
+    # 타입 변환
+    if 'dealAmount' in df:
+        df['dealAmount'] = df['dealAmount'].str.replace(',', '').astype(float)
+    df['excluUseAr'] = df['excluUseAr'].astype(float)
+    df['buildYear']  = df['buildYear'].astype(int)
+
+    # 건축년도 필터
+    df = df[df['buildYear'] >= built_after]
+
+    # 필요한 컬럼만
+    return df[WANT_COLS]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4) 전체 Raw 데이터 수집
+# 5) 전체 Raw 데이터 수집 & 카운트 집계
 records = []
-current_year = datetime.now().year
+counts = {}  # 월별 건수
+
+current_year  = datetime.now().year
+current_month = datetime.now().month
 
 for year in range(start_year, current_year + 1):
-    for month in range(1, 13):
+    last_month = current_month if year == current_year else 12
+    for month in range(1, last_month + 1):
         ym = f"{year}{month:02d}"
+        month_total = 0
         page = 1
         while True:
             try:
@@ -137,43 +177,28 @@ for year in range(start_year, current_year + 1):
                 break
             if df.empty:
                 break
-
-            # 컬럼명 매핑
-            df.rename(columns={
-                'aptDong':    '법정동',
-                'aptNm':      '단지명',
-                'dealYear':   '년',
-                'dealMonth':  '월',
-                'dealAmount': '거래금액',
-                'excluUseAr': '전용면적',
-                'buildYear':  '건축년도',
-            }, inplace=True)
-
-            # 타입 변환
-            df['거래금액'] = df['거래금액'].str.replace(',', '').astype(float)
-            df['전용면적'] = df['전용면적'].astype(float)
-            df['건축년도'] = df['건축년도'].astype(int)
-
-            # 건축년도 필터
-            df = df[df['건축년도'] >= built_after]
-            if df.empty:
-                break
-
             records.append(df)
-
-            if len(df) < PAGE_SIZE:
+            cnt = len(df)
+            month_total += cnt
+            if cnt < PAGE_SIZE:
                 break
             page += 1
+        counts[ym] = month_total
+        print(f"[INFO] {ym} 수집건수 = {month_total}")
 
-# 기록이 없다면 종료
-if not records:
+all_data = pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+
+print("\n=== 월별 건수 요약 ===")
+for ym, cnt in sorted(counts.items()):
+    print(f"  {ym}: {cnt}")
+print(f"총 거래 건수: {len(all_data)}건\n")
+
+if all_data.empty:
     print("❌ 조건에 맞는 Raw 데이터가 없습니다.")
-    sys.exit(1)
+    sys.exit(0)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5) Raw Data 병합 및 엑셀 저장
-all_data = pd.concat(records, ignore_index=True)
-
+# 6) Raw Data 엑셀 저장
 with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
     all_data.to_excel(writer, sheet_name='RawData', index=False)
 
