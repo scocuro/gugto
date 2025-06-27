@@ -98,7 +98,8 @@ def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame
     resp = requests.get(BASE_URL, params=params, timeout=30)
     resp.raise_for_status()
     # 내장 etree 파서 사용
-    return pd.read_xml(resp.content, xpath='//item', parser='etree')
+    df = pd.read_xml(resp.content, xpath='.//item', parser='lxml')
+    return df
 
 # ── 5) 전체 기간 데이터 수집 ──
 records = []
