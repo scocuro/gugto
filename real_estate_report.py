@@ -88,12 +88,13 @@ BASE_URL = (
 )
 
 def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame:
+    page_size = 1000
     params = {
         'serviceKey': API_KEY,
         'LAWD_CD':    lawd_cd,
         'DEAL_YMD':   deal_ym,
         'pageNo':     page_no,
-        'numOfRows':  1,
+        'numOfRows':  page_size,
     }
     resp = requests.get(BASE_URL, params=params, timeout=30)
     resp.raise_for_status()
@@ -119,7 +120,7 @@ for year in range(start_year, current_year + 1):
             # 건축년도 필터
             if '건축년도' in df.columns:
                 df = df[df['건축년도'].astype(int) >= built_after]
-            if df.empty:
+            if df.empty or len(df) < PAGE_SIZE::
                 break
             records.append(df)
             page += 1
