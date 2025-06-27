@@ -120,7 +120,7 @@ for year in range(start_year, current_year + 1):
             # 건축년도 필터
             if '건축년도' in df.columns:
                 df = df[df['건축년도'].astype(int) >= built_after]
-            if df.empty or len(df) < PAGE_SIZE::
+            if df.empty or len(df) < PAGE_SIZE:
                 break
             records.append(df)
             page += 1
