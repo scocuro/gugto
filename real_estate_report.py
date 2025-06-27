@@ -93,7 +93,7 @@ def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame
         'LAWD_CD':    lawd_cd,
         'DEAL_YMD':   deal_ym,
         'pageNo':     page_no,
-        'numOfRows':  1000,
+        'numOfRows':  1,
     }
     resp = requests.get(BASE_URL, params=params, timeout=30)
     resp.raise_for_status()
