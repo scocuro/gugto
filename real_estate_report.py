@@ -10,7 +10,7 @@ from datetime import datetime
 from io import BytesIO
 
 # ── 설정값 ──
-CSV_PATH = "code_raw.csv"       # 시군구 코드 CSV (프로젝트 루트)
+CSV_PATH = "code_raw.csv"       # 시군구 코드 CSV 파일 경로 (프로젝트 루트)
 rent_conversion_rate = 0.06     # 6%
 
 # ── 1) 시군구 코드 CSV 로드 ──
@@ -112,33 +112,30 @@ def collect_all(base_url: str, cols: list, date_key: str) -> pd.DataFrame:
                 if df.empty:
                     break
 
-                # reindex로 컬럼 슬라이싱 (없으면 NaN)
+                # ── 컬럼 슬라이싱 ──
                 df = df.reindex(columns=cols).copy()
 
-                # deposit, monthlyRent 쉼표 제거 후 float 변환
-                if "deposit" in df.columns:
-                    df["deposit"] = (
-                        df["deposit"].astype(str)
-                                     .str.replace(",", "", regex=False)
-                                     .replace("", "0")
-                                     .astype(float)
-                    )
+                # ── 숫자형 컬럼 클린업 ──
+                for numcol in ["dealAmount","deposit","monthlyRent","excluUseAr","floor","buildYear"]:
+                    if numcol in df.columns:
+                        df[numcol] = (
+                            df[numcol]
+                              .astype(str)
+                              .str.replace(",", "", regex=False)
+                              .replace("", "0")
+                              .astype(float)
+                        )
+
+                # ── 전월세 전용 계산 ──
                 if "monthlyRent" in df.columns:
-                    df["monthlyRent"] = (
-                        df["monthlyRent"].astype(str)
-                                        .str.replace(",", "", regex=False)
-                                        .replace("", "0")
-                                        .astype(float)
-                    )
-                    # fixed_deposit 계산
                     df["fixed_deposit"] = (
                         df["monthlyRent"] * 12 / rent_conversion_rate
                         + df["deposit"]
                     )
 
-                # excluUseAr_adj 계산
+                # ── excluUseAr 보정 ──
                 if "excluUseAr" in df.columns:
-                    df["excluUseAr_adj"] = df["excluUseAr"].astype(float) * 121 / 400
+                    df["excluUseAr_adj"] = df["excluUseAr"] * 121 / 400
 
                 records.append(df)
                 if len(df) < 1000:
@@ -148,15 +145,14 @@ def collect_all(base_url: str, cols: list, date_key: str) -> pd.DataFrame:
     if records:
         return pd.concat(records, ignore_index=True)
     else:
-        # fixed_deposit, excluUseAr_adj 컬럼 포함
         extra = []
-        if "fixed_deposit" in cols or "monthlyRent" in cols:
+        if "monthlyRent" in cols:
             extra.append("fixed_deposit")
         if "excluUseAr" in cols:
             extra.append("excluUseAr_adj")
         return pd.DataFrame(columns=cols + extra)
 
-# ── 4) 원하는 컬럼 정의 ──
+# ── 4) 컬럼 정의 ──
 sale_cols = [
     "sggCd","umdNm","aptNm","jibun",
     "excluUseAr","dealYear","dealMonth","dealDay",
@@ -181,14 +177,14 @@ print("▶ 분양권(Silver) 수집 중…")
 df_silv = collect_all(BASE_SILV_URL, silv_cols, "DEAL_YMD")
 print(f"  → {len(df_silv)}건 수집 완료")
 
-# ── 5) 엑셀에 출력 ──
+# ── 5) 엑셀 저장 ──
 with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
-    # raw 시트
+    # 원본 시트
     df_sale.to_excel(writer, sheet_name="매매(raw)", index=False)
     df_rent.to_excel(writer, sheet_name="전월세(raw)", index=False)
     df_silv.to_excel(writer, sheet_name="분양권(raw)", index=False)
 
-    # 피벗 테이블 생성 함수
+    # ── 피벗 테이블 생성 함수 ──
     def make_pivot(df: pd.DataFrame, value_col: str) -> pd.DataFrame:
         pivot = (
             df.groupby(["umdNm","aptNm","dealYear"])
@@ -199,7 +195,6 @@ with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
               )
               .unstack("dealYear")
         )
-        # 컬럼 정리
         pivot.columns = ["_".join(map(str,c)) for c in pivot.columns]
         return pivot.reset_index()
 
