@@ -49,7 +49,7 @@ group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('--lawd-cd',     help='직접 법정동코드(5자리)')
 group.add_argument('--region-name', help='시도+시군구 명칭 (예: 충청남도 천안시 동남구)')
 parser.add_argument('--start-year',  type=int, default=2020, help='조회 시작 연도(YYYY)')
-parser.add_argument('--built-after', type=int, default=2015, help='준공 연도 이후 필터')
+parser.add_argument('--built-after', type=int, default=1970, help='준공 연도 이후 필터')
 parser.add_argument('--output',      default='report.xlsx', help='출력 엑셀 파일명')
 args = parser.parse_args()
 
