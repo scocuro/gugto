@@ -1,12 +1,14 @@
 """
 real_estate_report.py
 
-공공데이터 실거래 리포트 생성기
-  1) 시군구 코드 CSV 로드
-  2) 커맨드라인 인자: --lawd-cd / --region-name, --start-year, --built-after, --output
-  3) TLS1.2 고정 게이트웨이 호출 준비
-  4) 1) API 직접 호출 테스트 (샘플 한 달)
-  5) 전체 기간 페이징 수집 → 건축년도 필터 → 집계 → 엑셀 저장
+공공데이터 실거래 Raw Data 수집기
+  • 시군구 코드 CSV 로드
+  • --lawd-cd / --region-name, --start-year, --built-after, --output
+  • TLS1.2 고정 게이트웨이 호출
+  • XML 네임스페이스 제거 후 파싱
+  • 페이징으로 전체 Raw 레코드 수집
+  • 전처리 (컬럼명 매핑, 타입 변환, 건축년도 필터)
+  • Excel에 Raw Data 저장
 """
 
 import os
@@ -23,7 +25,7 @@ from urllib3.util.ssl_ import create_urllib3_context
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) 시군구 코드 CSV 로드
-CSV_PATH = "code_raw.csv"   # 프로젝트 루트에 두세요
+CSV_PATH = "code_raw.csv"
 try:
     csv_df = pd.read_csv(CSV_PATH, dtype=str, encoding="utf-8")
 except Exception as e:
@@ -53,17 +55,16 @@ def get_region_code(region_name: str) -> str:
     return sub.iloc[0]["법정동코드"][:5]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2) 커맨드라인 인자 파싱
-parser = argparse.ArgumentParser(description="공공데이터 실거래 리포트 생성기")
+# 2) 커맨드라인 인자
+parser = argparse.ArgumentParser(description="공공데이터 실거래 Raw Data 수집기")
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('--lawd-cd',     help='5자리 법정동(시군구) 코드 직접 입력')
 group.add_argument('--region-name', help='시도+시군구 명칭 (예: 충청남도 천안시 동남구)')
 parser.add_argument('--start-year',  type=int, default=2020, help='조회 시작 연도')
 parser.add_argument('--built-after', type=int, default=2015, help='준공 연도 이후 필터')
-parser.add_argument('--output',      default='report.xlsx', help='출력 엑셀 파일명')
+parser.add_argument('--output',      default='raw_report.xlsx', help='출력 엑셀 파일명')
 args = parser.parse_args()
 
-# region_code 결정
 if args.lawd_cd:
     region_code = args.lawd_cd
 else:
@@ -78,19 +79,17 @@ built_after = args.built_after
 output_file = args.output
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3) API Key & TLS1.2 준비
+# 3) API Key 및 TLS1.2 세션 설정
 API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not API_KEY:
     print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
 
-print(f"[DEBUG] using region_code = {region_code}")
-print(f"[DEBUG] API_KEY length = {len(API_KEY)}")
-
 class TLS12Adapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         ctx = create_urllib3_context()
-        ctx.options |= ssl.OP_NO_TLSv1_3
+        # 최소 TLS 1.2
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         kwargs['ssl_context'] = ctx
         return super().init_poolmanager(*args, **kwargs)
 
@@ -98,7 +97,7 @@ session = requests.Session()
 session.mount("https://", TLS12Adapter())
 
 BASE_URL = (
-    "http://apis.data.go.kr/1613000/"
+    "https://apis.data.go.kr/1613000/"
     "RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 )
 PAGE_SIZE = 1000
@@ -111,44 +110,18 @@ def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame
         'pageNo':     page_no,
         'numOfRows':  PAGE_SIZE,
     }
-    try:
-        resp = session.get(BASE_URL, params=params, timeout=30)
-        resp.raise_for_status()
-    except Exception as e:
-        raise RuntimeError(f"HTTP call failed: {e}")
+    resp = session.get(BASE_URL, params=params, timeout=30)
+    resp.raise_for_status()
 
     # XML 네임스페이스 제거
     text = resp.content.decode('utf-8')
     text = re.sub(r'\sxmlns="[^"]+"', '', text, count=1)
 
-    try:
-        df = pd.read_xml(text, xpath='.//item', parser='lxml')
-    except Exception as e:
-        raise RuntimeError(f"XML parse failed: {e}")
-    return df
+    # DataFrame 반환
+    return pd.read_xml(text, xpath='.//item', parser='lxml')
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4) API 직접 호출 테스트 (최근 월 한 달)
-now = datetime.now()
-# 이전 달 계산
-if now.month > 1:
-    test_year, test_month = now.year, now.month - 1
-else:
-    test_year, test_month = now.year - 1, 12
-test_ym = f"{test_year}{test_month:02d}"
-
-print(f"\n[TEST] 샘플 호출: {test_ym} 5건만 조회해 봅니다…")
-try:
-    # numOfRows를 5로 줄여서 빠르게 테스트
-    df_test = fetch_transactions(region_code, test_ym, page_no=1)
-    print(f"[TEST] status=200, rows={len(df_test)}")
-    if not df_test.empty:
-        print(df_test.head(2).to_string(index=False))
-except Exception as e:
-    print(f"[TEST] 호출 또는 파싱 중 오류: {e}")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 5) 전체 기간 데이터 수집
+# 4) 전체 Raw 데이터 수집
 records = []
 current_year = datetime.now().year
 
@@ -160,72 +133,48 @@ for year in range(start_year, current_year + 1):
             try:
                 df = fetch_transactions(region_code, ym, page)
             except Exception as e:
-                print(f"WARNING: {ym} p{page} failed: {e}")
+                print(f"WARN: {ym} p{page} 호출/파싱 실패: {e}")
                 break
             if df.empty:
                 break
+
+            # 컬럼명 매핑
+            df.rename(columns={
+                'aptDong':    '법정동',
+                'aptNm':      '단지명',
+                'dealYear':   '년',
+                'dealMonth':  '월',
+                'dealAmount': '거래금액',
+                'excluUseAr': '전용면적',
+                'buildYear':  '건축년도',
+            }, inplace=True)
+
+            # 타입 변환
+            df['거래금액'] = df['거래금액'].str.replace(',', '').astype(float)
+            df['전용면적'] = df['전용면적'].astype(float)
+            df['건축년도'] = df['건축년도'].astype(int)
+
             # 건축년도 필터
-            if '건축년도' in df.columns:
-                df = df[df['건축년도'].astype(int) >= built_after]
+            df = df[df['건축년도'] >= built_after]
             if df.empty:
                 break
+
             records.append(df)
+
             if len(df) < PAGE_SIZE:
                 break
             page += 1
 
+# 기록이 없다면 종료
 if not records:
-    print("\n❌ 조건에 맞는 거래 데이터가 없습니다. 스크립트를 검토해 보세요.")
+    print("❌ 조건에 맞는 Raw 데이터가 없습니다.")
     sys.exit(1)
-# ── 5) 데이터 병합 및 전처리 ──
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5) Raw Data 병합 및 엑셀 저장
 all_data = pd.concat(records, ignore_index=True)
 
-# 1) 컬럼명 매핑
-all_data.rename(columns={
-    'aptDong':    '법정동',
-    'aptNm':      '단지명',
-    'dealYear':   '년',
-    'dealMonth':  '월',
-    'dealAmount': '거래금액',
-    'excluUseAr': '전용면적',
-    'buildYear':  '건축년도',
-}, inplace=True)
-
-# 2) 금액, 면적, 건축년도 숫자로 변환
-#    거래금액은 콤마 제거 후 float
-all_data['거래금액'] = (
-    all_data['거래금액']
-       .str.replace(',', '', regex=False)
-       .astype(float)
-)
-all_data['전용면적']  = all_data['전용면적'].astype(float)
-all_data['건축년도']  = all_data['건축년도'].astype(int)
-
-# 3) 건축년도 필터 (이미 fetch 단계에서 일부 걸러졌더라도 한 번 더 안전하게)
-all_data = all_data[ all_data['건축년도'] >= built_after ]
-
-# 4) 연도 컬럼 정리 (이미 '년' 컬럼으로 매핑했으니 여기선 그대로 사용)
-#    필요하다면 datetime 으로 바꾸는 로직은 생략해도 됩니다.
-
-# 5) 평당가(unit price) 계산
-all_data['unit_price'] = (
-    all_data['거래금액'] / all_data['전용면적']
-)
-
-# ── 6) 집계 ──
-agg = (
-    all_data
-    .groupby(['법정동', '단지명', '년'], dropna=False)
-    .agg(
-        avg_price      = ('거래금액',  'mean'),
-        count          = ('거래금액',  'size'),
-        avg_unit_price = ('unit_price','mean'),
-    )
-    .reset_index()
-)
-
-# ── 7) 엑셀로 저장 ──
 with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-    agg.to_excel(writer, sheet_name='연도별집계', index=False)
+    all_data.to_excel(writer, sheet_name='RawData', index=False)
 
-print(f"✅ 리포트가 '{output_file}' 로 저장되었습니다.")
+print(f"✅ Raw Data가 '{output_file}' 로 저장되었습니다.")
