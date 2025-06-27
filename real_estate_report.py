@@ -117,7 +117,7 @@ def collect_all(base_url, cols, date_key):
                 if 'excluUseAr' in df:
                     df['excluUseAr_adj'] = (
                         df['excluUseAr'].astype(str)
-                                       .str.replace(',','',False)
+                                       .str.replace(',','',regex=False)
                                        .astype(float)
                         *121/400
                     )
