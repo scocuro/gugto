@@ -109,11 +109,11 @@ def collect_all(base_url, cols, date_key):
                 df = df.loc[:, [*cols, 'dealYear','dealMonth','dealDay']]
                 # 숫자형 변환
                 if 'dealAmount' in df:
-                    df['dealAmount'] = df['dealAmount'].astype(str).str.replace(',','',False).astype(float)
+                    df['dealAmount'] = df['dealAmount'].astype(str).str.replace(',','',regex=False).astype(float)
                 if 'deposit' in df:
-                    df['deposit']    = df['deposit'].astype(str).str.replace(',','',False).astype(float)
+                    df['deposit']    = df['deposit'].astype(str).str.replace(',','',regex=False).astype(float)
                 if 'monthlyRent' in df:
-                    df['monthlyRent']= df['monthlyRent'].astype(str).str.replace(',','',False).astype(float)
+                    df['monthlyRent']= df['monthlyRent'].astype(str).str.replace(',','',regex=False).astype(float)
                 if 'excluUseAr' in df:
                     df['excluUseAr_adj'] = (
                         df['excluUseAr'].astype(str)
