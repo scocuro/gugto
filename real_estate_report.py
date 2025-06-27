@@ -83,7 +83,7 @@ if not API_KEY:
 print(f"DEBUG: API_KEY length = {len(API_KEY)}")
 
 BASE_URL = (
-    'http://openapi.molit.go.kr:8081/OpenAPI_ToolInstallPackage/'
+    'apis.data.go.kr/1613000/RTMSDataSvcAptTrade'
     'service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
 )
 
