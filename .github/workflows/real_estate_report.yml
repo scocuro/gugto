@@ -36,5 +36,5 @@ jobs:
       - name: 결과 업로드
         uses: actions/upload-artifact@v4
         with:
-          name: cheonan_report
+          name: report
           path: cheonan_report.xlsx
