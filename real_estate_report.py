@@ -66,6 +66,7 @@ if args.lawd_cd:
 else:
     try:
         region_code = get_region_code(args.region_name)
+print(f"DEBUG: using region_code = {region_code}")   # ← 여기를 추가
     except Exception as e:
         print("ERROR:", e)
         sys.exit(1)
