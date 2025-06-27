@@ -97,7 +97,7 @@ session = requests.Session()
 session.mount("https://", TLS12Adapter())
 
 BASE_URL = (
-    "https://apis.data.go.kr/1613000/"
+    "http://apis.data.go.kr/1613000/"
     "RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 )
 PAGE_SIZE = 1000
