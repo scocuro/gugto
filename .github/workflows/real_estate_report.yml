@@ -30,7 +30,6 @@ jobs:
           python real_estate_report.py \
             --region-name "충청남도 천안시동남구" \
             --start-year 2025 \
-            --built-after 2015 \
             --output cheonan_report.xlsx
 
       - name: 결과 업로드
