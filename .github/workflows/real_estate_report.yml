@@ -28,7 +28,7 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
         run: |
           python real_estate_report.py \
-            --region-name "충청남도 천안시 동남구" \
+            --region-name "충청남도 천안시동남구" \
             --start-year 2020 \
             --built-after 2015 \
             --output cheonan_report.xlsx
