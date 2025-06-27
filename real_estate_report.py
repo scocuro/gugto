@@ -159,7 +159,7 @@ df_rent['fixed_deposit'] = (
 # ── 8) 피벗 함수 ──
 def make_pivot(df: pd.DataFrame, value_col: str, sheet_name: str) -> pd.DataFrame:
     df = df.copy()
-    df['excluUseAr_adj'] = df['excluUseAr'].str.replace(',','').astype(float) * 121 / 400
+    df['excluUseAr_adj'] = (df['excluUseAr'].astype(str).str.replace(',','',regex=False).astype(float) * 121 / 400)
     grouped = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
     agg = (
         grouped
