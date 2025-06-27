@@ -11,6 +11,8 @@ from datetime import datetime
 #    사용하시는 CSV 파일 경로로 수정하세요.
 CSV_PATH = "code_raw.csv"
 
+print(f"DEBUG: API_KEY length = {len(API_KEY)}")
+
 try:
     csv_df = pd.read_csv(CSV_PATH, encoding="utf-8", dtype=str)
 except Exception as e:
