@@ -83,7 +83,7 @@ if not API_KEY:
 print(f"DEBUG: API_KEY length = {len(API_KEY)}")
 
 BASE_URL = (
-    "https://apis.data.go.kr/1613000/"
+    "http://apis.data.go.kr/1613000/"
     "RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 )
 
