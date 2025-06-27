@@ -86,9 +86,9 @@ BASE_URL = (
     "http://apis.data.go.kr/1613000/"
     "RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 )
-
+page_size = 1000
 def fetch_transactions(lawd_cd: str, deal_ym: str, page_no: int) -> pd.DataFrame:
-    page_size = 1000
+    
     params = {
         'serviceKey': API_KEY,
         'LAWD_CD':    lawd_cd,
