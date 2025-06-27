@@ -11,8 +11,6 @@ from datetime import datetime
 #    사용하시는 CSV 파일 경로로 수정하세요.
 CSV_PATH = "code_raw.csv"
 
-print(f"DEBUG: API_KEY length = {len(API_KEY)}")
-
 try:
     csv_df = pd.read_csv(CSV_PATH, encoding="utf-8", dtype=str)
 except Exception as e:
@@ -81,6 +79,8 @@ API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not API_KEY:
     print("ERROR: 환경변수 PUBLIC_DATA_API_KEY에 API 키를 설정하세요.")
     sys.exit(1)
+
+print(f"DEBUG: API_KEY length = {len(API_KEY)}")
 
 BASE_URL = (
     'http://openapi.molit.go.kr:8081/OpenAPI_ToolInstallPackage/'
