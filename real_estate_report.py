@@ -177,37 +177,55 @@ for year in range(start_year, current_year + 1):
 if not records:
     print("\n❌ 조건에 맞는 거래 데이터가 없습니다. 스크립트를 검토해 보세요.")
     sys.exit(1)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 6) 병합 · 집계
+# ── 5) 데이터 병합 및 전처리 ──
 all_data = pd.concat(records, ignore_index=True)
 
-if '년월' in all_data.columns:
-    all_data['거래년월'] = pd.to_datetime(
-        all_data['년월'].astype(str), format='%Y%m'
-    )
-    all_data['year'] = all_data['거래년월'].dt.year
+# 1) 컬럼명 매핑
+all_data.rename(columns={
+    'aptDong':    '법정동',
+    'aptNm':      '단지명',
+    'dealYear':   '년',
+    'dealMonth':  '월',
+    'dealAmount': '거래금액',
+    'excluUseAr': '전용면적',
+    'buildYear':  '건축년도',
+}, inplace=True)
 
-if {'전용면적','거래금액'}.issubset(all_data.columns):
-    all_data['unit_price'] = (
-        all_data['거래금액'].astype(float)
-        / all_data['전용면적'].astype(float)
-    )
+# 2) 금액, 면적, 건축년도 숫자로 변환
+#    거래금액은 콤마 제거 후 float
+all_data['거래금액'] = (
+    all_data['거래금액']
+       .str.replace(',', '', regex=False)
+       .astype(float)
+)
+all_data['전용면적']  = all_data['전용면적'].astype(float)
+all_data['건축년도']  = all_data['건축년도'].astype(int)
 
+# 3) 건축년도 필터 (이미 fetch 단계에서 일부 걸러졌더라도 한 번 더 안전하게)
+all_data = all_data[ all_data['건축년도'] >= built_after ]
+
+# 4) 연도 컬럼 정리 (이미 '년' 컬럼으로 매핑했으니 여기선 그대로 사용)
+#    필요하다면 datetime 으로 바꾸는 로직은 생략해도 됩니다.
+
+# 5) 평당가(unit price) 계산
+all_data['unit_price'] = (
+    all_data['거래금액'] / all_data['전용면적']
+)
+
+# ── 6) 집계 ──
 agg = (
     all_data
-    .groupby(['법정동','단지명','year'], dropna=False)
+    .groupby(['법정동', '단지명', '년'], dropna=False)
     .agg(
-        avg_price      = ('거래금액','mean'),
-        count          = ('거래금액','size'),
+        avg_price      = ('거래금액',  'mean'),
+        count          = ('거래금액',  'size'),
         avg_unit_price = ('unit_price','mean'),
     )
     .reset_index()
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 7) 엑셀 저장
+# ── 7) 엑셀로 저장 ──
 with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
     agg.to_excel(writer, sheet_name='연도별집계', index=False)
 
-print(f"\n✅ 리포트가 '{output_file}' 로 저장되었습니다.")
+print(f"✅ 리포트가 '{output_file}' 로 저장되었습니다.")
