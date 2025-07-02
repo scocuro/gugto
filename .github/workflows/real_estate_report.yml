@@ -28,7 +28,7 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
         run: |
           python real_estate_report.py \
-            --region-name "경상남도 진주시" \
+            --region-name "뿌파" \
             --start-year 2020 \
             --output report.xlsx
 
