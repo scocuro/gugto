@@ -28,8 +28,8 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
         run: |
           python real_estate_report.py \
-            --region-name "충청남도 천안시동남구" \
-            --start-year 2024 \
+            --region-name "경상남도 진주시" \
+            --start-year 2020 \
             --output report.xlsx
 
       - name: 결과 업로드
