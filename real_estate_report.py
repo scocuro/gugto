@@ -65,7 +65,7 @@ if not API_KEY:
     sys.exit(1)
 
 BASE_SALE_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
-BASE_RENT_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcRent/getRTMSDataSvcRent"
+BASE_RENT_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcRent/getRTMSDataSvcAptRent"
 BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcSilvTrade"
 
 # ── 5) API 호출 + XML→DataFrame 헬퍼 ──
