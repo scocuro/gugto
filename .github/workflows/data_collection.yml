@@ -2,7 +2,7 @@
 name: 공공데이터 수집
 
 on:
-  # 1) 수동 실행: UI에서 “Run workflow” 눌러서 선택
+  # 수동(trigger) 시 입력값 정의
   workflow_dispatch:
     inputs:
       data_type:
@@ -22,11 +22,11 @@ on:
         required: false
         default: '2020'
       start:
-        description: '미분양 데이터 시작 기간 (YYYYMM)'
+        description: '미분양 시작 기간 (YYYYMM)'
         required: false
         default: '202501'
       end:
-        description: '미분양 데이터 종료 기간 (YYYYMM)'
+        description: '미분양 종료 기간 (YYYYMM)'
         required: false
         default: '202505'
       output:
@@ -34,12 +34,19 @@ on:
         required: false
         default: 'report.xlsx'
 
+  # 자동 스케줄: 매일 UTC 00:00 (KST 09:00)
+  schedule:
+    - cron: '0 0 * * *'
+
 jobs:
   collect:
     runs-on: ubuntu-latest
-  env:
-    # 레포 전체를 모듈 검색 경로에 추가
-    PYTHONPATH: ${{ github.workspace }}
+
+    # 레포지토리 루트와 시크릿 키들 환경변수로 설정
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+      MOLIT_STATS_KEY:     ${{ secrets.MOLIT_STATS_KEY }}
 
     steps:
       - name: 코드 체크아웃
@@ -56,20 +63,13 @@ jobs:
           pip install -r requirements.txt
 
       - name: 데이터 수집 실행
-        env:
-          # 국토교통부 API 키
-          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
-          # 미분양용 MOLIT 인증키
-          MOLIT_STATS_KEY:       ${{ secrets.MOLIT_STATS_KEY }}
         run: |
           if [ "${{ github.event.inputs.data_type }}" = "real-estate" ]; then
-            # 스케줄(혹은 real-estate 선택) 시 real_estate_report.py 사용
             python real_estate_report.py \
               --region-name "${{ github.event.inputs.region_name }}" \
               --start-year "${{ github.event.inputs.start_year }}" \
               --output "${{ github.event.inputs.output }}"
           else
-            # notsold 선택 시 notsold.py 사용
             python notsold.py \
               --region-name "${{ github.event.inputs.region_name }}" \
               --start "${{ github.event.inputs.start }}" \
