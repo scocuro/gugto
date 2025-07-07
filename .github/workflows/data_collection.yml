@@ -1,0 +1,81 @@
+# .github/workflows/data-collection.yml
+name: 공공데이터 수집
+
+on:
+  # 1) 수동 실행: UI에서 “Run workflow” 눌러서 선택
+  workflow_dispatch:
+    inputs:
+      data_type:
+        description: '실거래(real-estate) vs 미분양(notsold)'
+        required: true
+        type: choice
+        default: 'real-estate'
+        options:
+          - real-estate
+          - notsold
+      region_name:
+        description: '시군구 (예: 경상남도 진주시 또는 서울 종로구)'
+        required: true
+        default: '경상남도 진주시'
+      start_year:
+        description: '실거래 시작 연도 (YYYY)'
+        required: false
+        default: '2020'
+      start:
+        description: '미분양 데이터 시작 기간 (YYYYMM)'
+        required: false
+        default: '202501'
+      end:
+        description: '미분양 데이터 종료 기간 (YYYYMM)'
+        required: false
+        default: '202505'
+      output:
+        description: '출력 파일명'
+        required: false
+        default: 'report.xlsx'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v3
+
+      - name: 파이썬 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 데이터 수집 실행
+        env:
+          # 국토교통부 API 키
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+          # 미분양용 MOLIT 인증키
+          MOLIT_STATS_KEY:       ${{ secrets.MOLIT_STATS_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.data_type }}" = "real-estate" ]; then
+            # 스케줄(혹은 real-estate 선택) 시 real_estate_report.py 사용
+            python real_estate_report.py \
+              --region-name "${{ github.event.inputs.region_name }}" \
+              --start-year "${{ github.event.inputs.start_year }}" \
+              --output "${{ github.event.inputs.output }}"
+          else
+            # notsold 선택 시 notsold.py 사용
+            python notsold.py \
+              --region-name "${{ github.event.inputs.region_name }}" \
+              --start "${{ github.event.inputs.start }}" \
+              --end "${{ github.event.inputs.end }}" \
+              --output "${{ github.event.inputs.output }}"
+          fi
+
+      - name: 결과 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: ${{ github.event.inputs.output }}
