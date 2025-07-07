@@ -78,13 +78,26 @@ def main():
     raw_prov = parts[0]
     prov_key = normalize_province(raw_prov)
     city_key = parts[1] if len(parts) >= 2 else None
+    district_key = parts[2] if len(parts) >= 3 else None
 
     # 디버그: 실제 API가 어떤 '구분'과 '시군구' 값을 주는지 보고 싶으면 uncomment
     # print(">>> prov_key:", prov_key, " city_key:", city_key)
 
+    # --- 디버깅 출력 시작 ---
+    print("▶ 입력 region-name:", args.region_name)
+    print("▶ prov_key:", prov_key, " city_key:", city_key, " district_key:", district_key)
+
+    
     # 데이터 가져오기
     df_monthly   = fetch_data(2082, 128, args.start, args.end)  # 월별 미분양(form_id=2082, style_num=128)
     df_completed = fetch_data(5328,   1, args.start, args.end)  # 완료후 미분양(form_id=5328, style_num=1)
+
+    # API가 실제로 어떤 '구분' 과 '시군구' 값을 내려주는지 확인
+    print("▶ MONTHLY 구분:", df_monthly["구분"].unique().tolist())
+    print("▶ MONTHLY 시군구:", df_monthly["시군구"].unique()[:10].tolist(), "…")
+    print("▶ COMPLETED 구분:", df_completed["구분"].unique().tolist())
+    print("▶ COMPLETED 시군구:", df_completed["시군구"].unique()[:10].tolist(), "…")
+    # --- 디버깅 출력 끝 ---
 
     # 필터링
     prov_mon, city_mon     = filter_by_region(df_monthly,   prov_key, city_key)
