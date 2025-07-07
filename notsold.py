@@ -98,4 +98,18 @@ def main():
     })
 
     # Excel 저장
-    with pd.ExcelWriter(ar
+    with pd.ExcelWriter(args.output) as writer:
+        prov_merged.to_excel(writer, sheet_name="province", index=False)
+
+        if city_key:
+            city_merged = pd.DataFrame({
+                "date":            city_mon["date"],
+                "monthly_count":   city_mon["count"],
+                "completed_count": city_comp["count"],
+            })
+            city_merged.to_excel(writer, sheet_name="city", index=False)
+
+    print(f"✅ '{args.output}' 생성 완료")
+
+if __name__ == "__main__":
+    main()
