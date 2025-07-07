@@ -7,13 +7,17 @@ import pandas as pd
 import requests
 
 MOLIT_URL = "http://stat.molit.go.kr/portal/openapi/service/rest/getList.do"
-API_KEY   = os.getenv("MOLIT_STATS_KEY")
+API_KEY = os.getenv("MOLIT_STATS_KEY")
 if not API_KEY:
-    raise EnvironmentError("환경변수 MOLIT_STATS_KEY 에 API 키를 설정해주세요")
+    raise EnvironmentError(
+        "환경변수 MOLIT_STATS_KEY 에 API 키를 설정해주세요"
+    )
 
-def fetch_form_list(form_id: int, style_num: int, start_dt: str, end_dt: str) -> pd.DataFrame:
+def fetch_data(form_id: int, style_num: int, start_dt: str, end_dt: str) -> pd.DataFrame:
     """
-    MOLIT API 호출해서 result_data.formList 전체를 DataFrame 으로 리턴
+    MOLIT API 호출 후 DataFrame으로 반환.
+    - formList 중 ['date','구분','시군구', count] 컬럼만 남김
+    - count 컬럼명은 unitName 에 따라 '미분양현황' 또는 '호' 일 수 있으니 'count'로 통일
     """
     params = {
         "key": API_KEY,
@@ -21,89 +25,91 @@ def fetch_form_list(form_id: int, style_num: int, start_dt: str, end_dt: str) ->
         "style_num": style_num,
         "start_dt": start_dt,
         "end_dt": end_dt,
+        "pageNo": 1,
+        "numOfRows": 1000,
+        "resultType": "json",
     }
     resp = requests.get(MOLIT_URL, params=params)
     resp.raise_for_status()
-    js = resp.json()
-    items = js["result_data"]["formList"]
-    # 단일 dict 인 경우 리스트로
-    if isinstance(items, dict):
-        items = [items]
-    df = pd.DataFrame(items)
-    # 칼럼명 공백 제거
-    df.columns = [c.strip() for c in df.columns]
-    return df
+    data = resp.json()["result_data"]["formList"]
+    df = pd.DataFrame(data)
 
-def parse_levels(region_name: str) -> list[tuple[str, str|None]]:
+    # 컬럼명 통일
+    if "미분양현황" in df.columns:
+        df = df.rename(columns={"미분양현황": "count"})
+    elif "호" in df.columns:
+        df = df.rename(columns={"호": "count"})
+    else:
+        raise KeyError(f"필수 컬럼 '미분양현황' 또는 '호' 가 응답에 없습니다: {df.columns.tolist()}")
+
+    # 필수 컬럼 검증
+    for col in ("date", "구분", "시군구"):
+        if col not in df.columns:
+            raise KeyError(f"필수 컬럼 '{col}' 가 응답에 없습니다: {df.columns.tolist()}")
+
+    return df[["date", "구분", "시군구", "count"]]
+
+def filter_by_region(df: pd.DataFrame, province: str, city: str = None):
     """
-    "경기도 수원시 영통구" →
-      [("경기도",   None),
-       ("경기도", "수원시")]
-    "충청남도 천안시" →
-      [("충청남도", None),
-       ("충청남도", "천안시")]
-    "서울특별시" →
-      [("서울특별시", None)]
+    df에서
+      - province(구분)==province, 시군구=="계" → 도별
+      - province(구분)==province, 시군구==city → 시군구별 (city가 있을 때)
     """
-    parts = region_name.split()
-    province = parts[0]
-    levels = [(province, None)]
-    if len(parts) >= 2:
-        city = parts[1]
-        levels.append((province, city))
-    return levels
+    df_prov = df[(df["구분"] == province) & (df["시군구"] == "계")].copy()
+    if city:
+        df_city = df[(df["구분"] == province) & (df["시군구"] == city)].copy()
+        return df_prov, df_city
+    return df_prov, None
 
 def main():
-    p = argparse.ArgumentParser("미분양 현황 수집기")
-    p.add_argument("--region-name", required=True,
-                   help="예: 경기도 수원시 영통구 (1~3단계 자동 대응)")
-    p.add_argument("--start", required=True, help="YYYYMM")
-    p.add_argument("--end",   required=True, help="YYYYMM")
-    p.add_argument("--output", default="notsold.xlsx",
-                   help="엑셀 파일명")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser("미분양 현황 수집기")
+    parser.add_argument(
+        "--region-name", required=True,
+        help="예: 경기도, 경상남도 진주시, 경기도 수원시 영통구"
+    )
+    parser.add_argument("--start", required=True, help="YYYYMM")
+    parser.add_argument("--end",   required=True, help="YYYYMM")
+    parser.add_argument(
+        "--output", default="notsold_report.xlsx",
+        help="출력할 엑셀 파일명 (기본: notsold_report.xlsx)"
+    )
+    args = parser.parse_args()
 
-    # 1단계(시도)·2단계(시도+시군구) tuple 리스트 생성
-    levels = parse_levels(args.region_name)
+    # 입력값 파싱: "도 [시군구 [구]]" → province, city
+    parts = args.region_name.split()
+    province = parts[0]
+    city    = parts[1] if len(parts) >= 2 else None
 
-    # 월별(form_id=2082, style_num=128) / 완료후(form_id=5328, style_num=1) 데이터 프레임
-    df_month = fetch_form_list(form_id=2082, style_num=128,
-                               start_dt=args.start, end_dt=args.end)
-    df_comp  = fetch_form_list(form_id=5328, style_num=1,
-                               start_dt=args.start, end_dt=args.end)
+    # 1) 월별 미분양
+    df_monthly   = fetch_data(form_id=2082, style_num=128,
+                              start_dt=args.start, end_dt=args.end)
+    # 2) 공사완료 후 미분양
+    df_completed = fetch_data(form_id=5328, style_num=1,
+                              start_dt=args.start, end_dt=args.end)
 
-    # 공통 필수 칼럼 체크
-    for df in (df_month, df_comp):
-        for col in ("구분", "시군구", "date", "미분양현황"):
-            if col not in df.columns:
-                raise KeyError(f"필수 컬럼 '{col}' 가 응답에 없습니다: {df.columns.tolist()}")
+    # 도/시군구별로 필터링
+    prov_monthly, city_monthly     = filter_by_region(df_monthly,   province, city)
+    prov_completed, city_completed = filter_by_region(df_completed, province, city)
 
-    writer = pd.ExcelWriter(args.output, engine="openpyxl")
+    # 병합 후 컬럼 정리
+    prov_merged = pd.DataFrame({
+        "date":              prov_monthly["date"],
+        "monthly_count":     prov_monthly["count"],
+        "completed_count":   prov_completed["count"],
+    })
 
-    for prov, city in levels:
-        # province 레벨 → 시도별 총계("구분"==prov & "시군구"=="계")
-        # city    레벨 → 시군구별   ("구분"==prov & "시군구"==city)
-        if city is None:
-            mask_month = (df_month["구분"] == prov) & (df_month["시군구"] == "계")
-            mask_comp  = (df_comp ["구분"] == prov) & (df_comp ["시군구"] == "계")
-            sheet_name = prov.replace(" ", "_")
-        else:
-            mask_month = (df_month["구분"] == prov) & (df_month["시군구"] == city)
-            mask_comp  = (df_comp ["구분"] == prov) & (df_comp ["시군구"] == city)
-            sheet_name = f"{prov}_{city}".replace(" ", "_")
+    # Excel로 저장
+    with pd.ExcelWriter(args.output) as writer:
+        prov_merged.to_excel(writer, sheet_name="province", index=False)
 
-        m = df_month.loc[mask_month, ["date", "미분양현황"]].rename(
-            columns={"미분양현황": "monthly_notsold"})
-        c = df_comp .loc[mask_comp , ["date", "미분양현황"]].rename(
-            columns={"미분양현황": "completed_notsold"})
+        if city:
+            city_merged = pd.DataFrame({
+                "date":            city_monthly["date"],
+                "monthly_count":   city_monthly["count"],
+                "completed_count": city_completed["count"],
+            })
+            city_merged.to_excel(writer, sheet_name="city", index=False)
 
-        out = pd.merge(
-            m, c, on="date", how="outer"
-        ).sort_values("date")
-
-        out.to_excel(writer, sheet_name=sheet_name, index=False)
-
-    writer.save()
     print(f"✅ '{args.output}' 생성 완료")
 
 if __name__ == "__main__":
