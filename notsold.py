@@ -1,142 +1,110 @@
 #!/usr/bin/env python3
-# notsold.py
+# modules/notsold.py
 
 import argparse
 import os
 import pandas as pd
-import requests
+from common import fetch_json_list
 
+# MOLIT 통계서비스 API 키를 환경변수에서 읽어옵니다
 API_KEY = os.getenv("MOLIT_STATS_KEY")
 BASE_URL = "http://stat.molit.go.kr/portal/openapi/service/rest/getList.do"
 
 
-def fetch_entries(form_id: int, style_num: int, start_dt: str, end_dt: str) -> list[dict]:
+def parse_region_hierarchy(region_name: str):
     """
-    주어진 form_id와 style_num에 대해 모든 페이지를 조회하여 항목들을 리스트로 반환합니다.
+    입력된 지명을 도/시, 시/군/구 수준으로 분해합니다.
+    예: "경기도 수원시 영통구" → ("경기도", "수원시", "영통구")
     """
-    items: list[dict] = []
-    page = 1
-    while True:
-        params = {
-            "key": API_KEY,
-            "form_id": form_id,
-            "style_num": style_num,
-            "start_dt": start_dt,
-            "end_dt": end_dt,
-            "pageNo": page,
-            "numOfRows": 1000,
-            "resultType": "json",
-        }
-        response = requests.get(BASE_URL, params=params)
-        response.raise_for_status()
-        body = response.json().get("response", {}).get("body", {})
-        batch = body.get("items", {}).get("item")
-        if not batch:
-            break
-        if isinstance(batch, dict):
-            items.append(batch)
-        else:
-            items.extend(batch)
-        if len(batch) < params["numOfRows"]:
-            break
-        page += 1
-    return items
+    parts = region_name.split()
+    province = parts[0] if len(parts) >= 1 else None
+    city     = parts[1] if len(parts) >= 2 else None
+    district = parts[2] if len(parts) >= 3 else None
+    return province, city, district
 
 
 def fetch_monthly_notsold(start_dt: str, end_dt: str) -> pd.DataFrame:
     """
-    월별 미분양(form_id=2082, style_num=128)을 조회하여 DataFrame으로 반환합니다.
+    월별 미분양 현황(form_id=2082, style_num=128)을 가져와 DataFrame으로 반환합니다.
     """
-    data = fetch_entries(2082, 128, start_dt, end_dt)
+    params = {
+        "key": API_KEY,
+        "form_id": 2082,
+        "style_num": 128,
+        "start_dt": start_dt,
+        "end_dt": end_dt,
+    }
+    data = fetch_json_list(BASE_URL, params)
     df = pd.DataFrame(data)
-    # 컬럼명 앞뒤 공백 제거
-    df.columns = df.columns.str.strip()
-    # 미분양 수량 컬럼명 표준화
-    if "미분양현황" in df.columns:
-        df = df.rename(columns={"미분양현황": "미분양호수"})
-    elif "호" in df.columns:
-        df = df.rename(columns={"호": "미분양호수"})
+    # 컬럼명이 문자열이 아닐 수 있으므로, 안전하게 strip 처리
+    df.columns = [str(col).strip() for col in df.columns]
     return df
 
 
 def fetch_completed_notsold(start_dt: str, end_dt: str) -> pd.DataFrame:
     """
-    공사완료후 미분양(form_id=5328, style_num=1)을 조회하여 DataFrame으로 반환합니다.
+    공사완료 후 미분양(form_id=5328, style_num=1)을 가져와 DataFrame으로 반환합니다.
     """
-    data = fetch_entries(5328, 1, start_dt, end_dt)
+    params = {
+        "key": API_KEY,
+        "form_id": 5328,
+        "style_num": 1,
+        "start_dt": start_dt,
+        "end_dt": end_dt,
+    }
+    data = fetch_json_list(BASE_URL, params)
     df = pd.DataFrame(data)
-    # 컬럼명 앞뒤 공백 제거
-    df.columns = df.columns.str.strip()
-    # 완료후 미분양 수량 컬럼명 표준화
-    if "호" in df.columns:
-        df = df.rename(columns={"호": "완료후미분양호수"})
-    elif "미분양현황" in df.columns:
-        df = df.rename(columns={"미분양현황": "완료후미분양호수"})
+    df.columns = [str(col).strip() for col in df.columns]
     return df
 
 
-def parse_region_hierarchy(region_name: str) -> list[str]:
+def filter_by_region(df: pd.DataFrame, province: str, city: str = None, district: str = None) -> pd.DataFrame:
     """
-    입력된 region_name을 분해하여 [도/특별시, 도/특별시 시/군/구] 형태의 리스트로 반환합니다.
-    예: "경기도 수원시 영통구" -> ["경기도", "경기도 수원시"]
+    df에서 도/시, 시/군/구 수준으로 필터링합니다.
+    - district가 있으면 시군구별 '구분'에서 district를 필터
+    - city만 있으면 시군구별 '구분'에서 city를 필터
+    - 둘 다 없으면 시도별 '구분'에서 province를 필터
     """
-    parts = region_name.split()
-    if len(parts) == 1:
-        return [parts[0]]
-    return [parts[0], " ".join(parts[:2])]
-
-
-def filter_by_region(df: pd.DataFrame, province: str, city: str | None = None) -> pd.DataFrame:
-    """
-    df의 '구분'(도/특별시) 및 '시군구' 컬럼으로 필터링합니다.
-    city가 None일 경우 '시군구' == '계'만 추출합니다.
-    """
-    df.columns = df.columns.str.strip()
-    if "구분" not in df.columns or "시군구" not in df.columns:
-        raise KeyError("필수 컬럼 '구분' 혹은 '시군구' 가 없습니다.")
-    mask = df["구분"] == province
-    if city:
-        mask &= df["시군구"] == city
+    if district:
+        mask = (df['구분'] == '시군구별') & (df['시군구'] == district)
+    elif city:
+        mask = (df['구분'] == '시군구별') & (df['시군구'] == city)
     else:
-        mask &= df["시군구"] == "계"
-    return df.loc[mask].copy()
+        mask = (df['구분'] == '시도별') & (df['시군구'] == province)
+    return df[mask]
 
 
 def main():
-    parser = argparse.ArgumentParser("미분양 현황 수집기")
-    parser.add_argument(
-        "--region-name",
-        required=True,
-        help="예: 서울, 서울 종로구, 경기도 수원시 영통구"
-    )
+    parser = argparse.ArgumentParser(description="미분양 현황 수집기")
+    parser.add_argument("--region-name", required=True,
+                        help="예: 경기도 수원시 영통구 또는 경상남도")
     parser.add_argument("--start", required=True, help="YYYYMM")
     parser.add_argument("--end",   required=True, help="YYYYMM")
     parser.add_argument("--output", default="notsold.xlsx")
     args = parser.parse_args()
 
-    regions = parse_region_hierarchy(args.region_name)
+    province, city, district = parse_region_hierarchy(args.region_name)
 
-    df_monthly   = fetch_monthly_notsold(args.start, args.end)
-    df_completed = fetch_completed_notsold(args.start, args.end)
+    # 원시 데이터 조회
+    df_monthly_raw   = fetch_monthly_notsold(args.start, args.end)
+    df_completed_raw = fetch_completed_notsold(args.start, args.end)
 
+    # 각 단계별로 필터링하여 시트로 저장
+    sheets = {
+        'monthly_province':  filter_by_region(df_monthly_raw,   province),
+        'completed_province': filter_by_region(df_completed_raw, province),
+    }
+    if city:
+        sheets['monthly_city']     = filter_by_region(df_monthly_raw,   province, city)
+        sheets['completed_city']   = filter_by_region(df_completed_raw, province, city)
+    if district:
+        sheets['monthly_district']   = filter_by_region(df_monthly_raw,   province, city, district)
+        sheets['completed_district'] = filter_by_region(df_completed_raw, province, city, district)
+
+    # 결과를 엑셀 파일로 출력
     with pd.ExcelWriter(args.output) as writer:
-        for reg in regions:
-            parts = reg.split()
-            province = parts[0]
-            city     = parts[1] if len(parts) > 1 else None
-
-            m = filter_by_region(df_monthly, province, city)
-            c = filter_by_region(df_completed, province, city)
-
-            # 날짜 컬럼 자동 선택
-            date_col = next((col for col in ("date", "stdDay") if col in m.columns), m.columns[0])
-
-            out = (
-                m[[date_col, "미분양호수"]]
-                .merge(c[[date_col, "완료후미분양호수"]], on=date_col, how="left")
-            )
-            sheet_name = reg.replace(" ", "_")[:31]
-            out.to_excel(writer, sheet_name=sheet_name, index=False)
+        for name, df in sheets.items():
+            df.to_excel(writer, sheet_name=name, index=False)
 
     print(f"✅ '{args.output}' 생성 완료")
 
