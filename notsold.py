@@ -103,8 +103,8 @@ def main():
     # 월별 미분양 (form_id=2082, style_num=128)
     df_monthly = fetch_data(form_id=2082, style_num=128,
                              start_dt=args.start, end_dt=args.end)
-    # 공사완료 후 미분양 (form_id=5328, style_num=128)
-    df_completed = fetch_data(form_id=5328, style_num=128,
+    # 공사완료 후 미분양 (form_id=5328, style_num=1)
+    df_completed = fetch_data(form_id=5328, style_num=1,
                                start_dt=args.start, end_dt=args.end)
 
     # region-level 및 city-level 필터링
