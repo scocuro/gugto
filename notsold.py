@@ -20,7 +20,7 @@ def fetch_completed_notsold(province, district, start_dt, end_dt):
         "start_dt": start_dt,
         "end_dt": end_dt,
     }
-    data = fetch_json_list(url, params, list_key="formList")
+    data = fetch_json_list(url, params)
     df = pd.DataFrame(data)
     return df[(df["구분"] == province) & (df["시군구"] == district)]
 
@@ -34,7 +34,7 @@ def fetch_monthly_notsold(province, district, start_dt, end_dt):
         "start_dt": start_dt,
         "end_dt": end_dt,
     }
-    data = fetch_json_list(url, params, list_key="formList")
+    data = fetch_json_list(url, params)
     df = pd.DataFrame(data)
     return df[(df["구분"] == province) & (df["시군구"] == district)]
 
