@@ -44,7 +44,7 @@ def fetch_entries(form_id: int, style_num: int, start_dt: str, end_dt: str) -> l
 
 
 def fetch_monthly_notsold(start_dt: str, end_dt: str) -> pd.DataFrame:
-    # form_id=2082, style_num=128 으로 변경
+    # 월별 미분양: form_id=2082, style_num=128
     data = fetch_entries(form_id=2082, style_num=128, start_dt=start_dt, end_dt=end_dt)
     df = pd.DataFrame(data)
     if "호" in df.columns:
@@ -53,7 +53,7 @@ def fetch_monthly_notsold(start_dt: str, end_dt: str) -> pd.DataFrame:
 
 
 def fetch_completed_notsold(start_dt: str, end_dt: str) -> pd.DataFrame:
-    # form_id=5328, style_num=1 (기존)
+    # 공사완료후 미분양: form_id=5328, style_num=1
     data = fetch_entries(form_id=5328, style_num=1, start_dt=start_dt, end_dt=end_dt)
     df = pd.DataFrame(data)
     if "호" in df.columns:
@@ -62,19 +62,32 @@ def fetch_completed_notsold(start_dt: str, end_dt: str) -> pd.DataFrame:
 
 
 def parse_region_hierarchy(region_name: str) -> list[str]:
+    """
+    입력된 region_name을
+      - ["서울"] 또는
+      - ["경기도","경기도 수원시"]
+    처럼 Province- or Province+City- 레벨만 뽑아냅니다.
+    """
     parts = region_name.split()
     if len(parts) == 1:
         return [parts[0]]
-    elif len(parts) == 2:
-        return [" ".join(parts)]
-    else:
-        return [parts[0], " ".join(parts[:2])]
+    # 둘 이상 쓰셨다면 province 와 province+city 두 단계만.
+    return [parts[0], " ".join(parts[:2])]
 
 
-def filter_by_region(df: pd.DataFrame, province: str, city: str | None) -> pd.DataFrame:
-    mask = df["시도명"] == province
+def filter_by_region(df: pd.DataFrame, province: str, city: str | None = None) -> pd.DataFrame:
+    """
+    df["구분"] 에 province가, 
+    그리고 city가 주어지면 df["시군구"] == city,
+    city가 없으면 aggregate row인 df["시군구"] == "계" 만 남깁니다.
+    """
+    if "구분" not in df.columns or "시군구" not in df.columns:
+        raise KeyError("필수 컬럼 '구분' 혹은 '시군구' 가 없습니다.")
+    mask = df["구분"] == province
     if city:
-        mask &= df["시군구명"] == city
+        mask &= df["시군구"] == city
+    else:
+        mask &= df["시군구"] == "계"
     return df.loc[mask].copy()
 
 
@@ -83,44 +96,45 @@ def main():
     parser.add_argument(
         "--region-name",
         required=True,
-        help="예: 서울, 서울 종로구, 경기도 수원시 영통구",
+        help="예: 서울, 서울 종로구, 경기도 수원시 영통구"
     )
     parser.add_argument("--start", required=True, help="YYYYMM")
-    parser.add_argument("--end", required=True, help="YYYYMM")
+    parser.add_argument("--end",   required=True, help="YYYYMM")
     parser.add_argument("--output", default="notsold.xlsx")
     args = parser.parse_args()
 
+    # Province- 레벨, Province+City- 레벨 두 단계
     regions = parse_region_hierarchy(args.region_name)
 
-    df_monthly_raw = fetch_monthly_notsold(args.start, args.end)
-    df_completed_raw = fetch_completed_notsold(args.start, args.end)
+    df_monthly = fetch_monthly_notsold(args.start, args.end)
+    df_completed = fetch_completed_notsold(args.start, args.end)
 
-    merged_dict: dict[str, pd.DataFrame] = {}
-    for reg in regions:
-        parts = reg.split()
-        province = parts[0]
-        city = parts[1] if len(parts) > 1 else None
-
-        df_m = filter_by_region(df_monthly_raw, province, city)
-        df_c = filter_by_region(df_completed_raw, province, city)
-
-        if "stdDay" in df_m.columns:
-            date_col = "stdDay"
-        elif "date" in df_m.columns:
-            date_col = "date"
-        else:
-            date_col = df_m.columns[0]
-
-        merged = (
-            df_m[[date_col, "미분양호수"]]
-            .merge(df_c[[date_col, "완료후미분양호수"]], on=date_col, how="left")
-        )
-        merged_dict[reg] = merged
-
+    # 각 레벨마다 시트 생성
     with pd.ExcelWriter(args.output) as writer:
-        for reg_name, df_out in merged_dict.items():
-            sheet = reg_name.replace(" ", "_")[:31]
-            df_out.to_excel(writer, sheet_name=sheet, index=False)
+        for reg in regions:
+            parts = reg.split()
+            province = parts[0]
+            city = parts[1] if len(parts) > 1 else None
+
+            m = filter_by_region(df_monthly, province, city)
+            c = filter_by_region(df_completed, province, city)
+
+            # 날짜 컬럼 찾기
+            date_col = None
+            for col in ("date", "stdDay"):
+                if col in m.columns:
+                    date_col = col
+                    break
+            if not date_col:
+                date_col = m.columns[0]
+
+            out = (
+                m[[date_col, "미분양호수"]]
+                .merge(c[[date_col, "완료후미분양호수"]], on=date_col, how="left")
+            )
+
+            sheet_name = reg.replace(" ", "_")[:31]
+            out.to_excel(writer, sheet_name=sheet_name, index=False)
 
     print(f"✅ '{args.output}' 생성 완료")
 
