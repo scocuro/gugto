@@ -1,92 +1,101 @@
 #!/usr/bin/env python3
 # notsold.py
 
+import os
 import argparse
 import pandas as pd
-from common import fetch_json_list, split_region_name
+import requests
 
-# ── API 엔드포인트 ──
+# ─────────────────────────────────────────────────────────────────────────────
 BASE_URL = "http://stat.molit.go.kr/portal/openapi/service/rest/getList.do"
+API_KEY   = os.getenv("MOLIT_STATS_KEY")  # MOLIT_STATS_KEY 환경변수에 키를 설정하세요
 
-def fetch_monthly_notsold(start_dt, end_dt):
-    """월별 미분양 (form_id=2082) 전체 기간 한번에 가져오기"""
+def fetch_json_list(form_id: int, style_num: int, start_dt: str, end_dt: str) -> pd.DataFrame:
+    """
+    MOLIT API에서 form_id/style_num으로 페이징 전수 조회 후 DataFrame 반환.
+    """
     params = {
-        "form_id":   2082,
-        "style_num": 128,
-        "start_dt":  start_dt,
-        "end_dt":    end_dt,
+        "key":        API_KEY,
+        "form_id":    form_id,
+        "style_num":  style_num,
+        "start_dt":   start_dt,
+        "end_dt":     end_dt,
+        "resultType": "json",
+        "pageNo":     1,
+        "numOfRows":  1000,
     }
-    data = fetch_json_list(BASE_URL, params, list_key="formList")
-    return pd.DataFrame(data)
+    items = []
+    while True:
+        resp = requests.get(BASE_URL, params=params)
+        resp.raise_for_status()
+        data = resp.json().get("formList", [])
+        if not data:
+            break
+        items.extend(data)
+        if len(data) < params["numOfRows"]:
+            break
+        params["pageNo"] += 1
+    return pd.DataFrame(items)
 
 
-def fetch_completed_notsold(start_dt, end_dt):
-    """공사완료 후 미분양 (form_id=5328) 전체 기간 한번에 가져오기"""
-    params = {
-        "form_id":   5328,
-        "style_num": 1,
-        "start_dt":  start_dt,
-        "end_dt":    end_dt,
-    }
-    data = fetch_json_list(BASE_URL, params, list_key="formList")
-    return pd.DataFrame(data)
+def merge_counts(df_mon: pd.DataFrame, df_cmp: pd.DataFrame) -> pd.DataFrame:
+    """
+    월별(df_mon)과 완료후(df_cmp)를 date 기준 병합하고 컬럼명 변경.
+    """
+    mon = df_mon.rename(columns={"호": "미분양호수"})
+    cmp = df_cmp.rename(columns={"호": "완료후미분양호수"})
+    return mon.merge(
+        cmp[["date", "완료후미분양호수"]],
+        on="date", how="left"
+    )
+
+
+def filter_region(df: pd.DataFrame, province: str, subregion: str = None) -> pd.DataFrame:
+    """
+    df에서
+      - 구분==province
+      - 시군구==subregion (None이면 '계' 요약행)
+    """
+    df0 = df[df["구분"] == province]
+    if subregion:
+        return df0[df0["시군구"] == subregion]
+    else:
+        return df0[df0["시군구"] == "계"]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="미분양 현황 수집기")
+    parser = argparse.ArgumentParser("미분양 현황 수집기")
     parser.add_argument("--region-name", required=True,
-                        help="예: 경기도 또는 경기도 수원시 또는 경기도 수원시 영통구")
+                        help="예: 경기도  OR  경기도 수원시  OR  경기도 수원시 영통구")
     parser.add_argument("--start", required=True, help="YYYYMM")
     parser.add_argument("--end",   required=True, help="YYYYMM")
     parser.add_argument("--output", default="notsold.xlsx",
-                        help="출력 엑셀 파일명")
+                        help="저장할 Excel 파일명")
     args = parser.parse_args()
 
-    # 1) 지역명 분리 → 3단계(省→市→郡)，없는 건 None
-    province, city, district = split_region_name(args.region_name)
+    # 입력 분해
+    parts    = args.region_name.split()
+    province = parts[0]
+    city     = parts[1] if len(parts) >= 2 else None
+    district = parts[2] if len(parts) >= 3 else None
 
-    # 2) 한 번씩 API에서 가져온 뒤 DataFrame 생성
-    df_monthly   = fetch_monthly_notsold(args.start, args.end)
-    df_completed = fetch_completed_notsold(args.start, args.end)
+    # 1) 월별미분양(form_id=2082, style_num=128)
+    # 2) 공사완료후미분양(form_id=5328, style_num=1)
+    df_monthly_all   = fetch_json_list(2082, 128, args.start, args.end)
+    df_completed_all = fetch_json_list(5328,   1, args.start, args.end)
 
-    # 3) 도/시/구(읍면동) 레벨별 필터 정의
-    levels = []
-    # 3-1) 도 레벨
-    levels.append(("{}_월별".format(province),
-                   df_monthly[df_monthly["시도"] == province],
-                   df_completed[df_completed["시도"] == province]))
-    # 3-2) 시군 레벨 (있으면)
-    if city:
-        name = f"{province} {city}"
-        levels.append((f"{name}_월별",
-                       df_monthly[(df_monthly["시도"] == province) &
-                                  (df_monthly["시군구"] == city)],
-                       df_completed[(df_completed["시도"] == province) &
-                                    (df_completed["시군구"] == city)]))
-    # 3-3) 읍면동 레벨 (있으면)
-    if district:
-        name = f"{province} {city} {district}"
-        levels.append((f"{name}_월별",
-                       df_monthly[(df_monthly["시도"] == province)  &
-                                  (df_monthly["시군구"] == city)     &
-                                  (df_monthly["읍면동"] == district)],
-                       df_completed[(df_completed["시도"] == province)  &
-                                    (df_completed["시군구"] == city)     &
-                                    (df_completed["읍면동"] == district)]))
+    # 결과를 한 파일에 여러 시트로 저장
+    with pd.ExcelWriter(args.output) as writer:
+        # ── ① 도(省) 단위
+        mon_p = filter_region(df_monthly_all,   province)
+        cmp_p = filter_region(df_completed_all, province)
+        merge_counts(mon_p, cmp_p) \
+            .to_excel(writer, sheet_name=province, index=False)
 
-    # 4) 결과를 하나의 Excel 파일에 레벨별 시트로 저장
-    with pd.ExcelWriter(args.output, engine="xlsxwriter") as writer:
-        for sheet_prefix, df_mon, df_comp in levels:
-            # 월별
-            df_mon.to_excel(writer,
-                            sheet_name=sheet_prefix,
-                            index=False)
-            # 완료후
-            df_comp.to_excel(writer,
-                              sheet_name=sheet_prefix.replace("_월별", "_완료후"),
-                              index=False)
-
-    print(f"✅ '{args.output}' 생성 완료")
-
-if __name__ == "__main__":
-    main()
+        # ── ② 시(市) 단위
+        if city:
+            mon_c = filter_region(df_monthly_all,   province, city)
+            cmp_c = filter_region(df_completed_all, province, city)
+            merge_counts(mon_c, cmp_c) \
+                .to_excel(writer,
+                          sheet_name=f"{_
