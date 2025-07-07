@@ -12,7 +12,7 @@ def fetch_monthly_notsold(start_dt, end_dt):
     """월별 미분양 (form_id=2082) 전체 기간 한번에 가져오기"""
     params = {
         "form_id":   2082,
-        "style_num": 1,
+        "style_num": 128,
         "start_dt":  start_dt,
         "end_dt":    end_dt,
     }
