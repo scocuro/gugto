@@ -44,7 +44,8 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
       PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
       MOLIT_STATS_KEY:     ${{ secrets.MOLIT_STATS_KEY }}
-      SERVICE_POP_KEY:     ${{ secrets.SERVICE_POP_KEY }}
+      POP_KEY:     ${{ secrets.POP_KEY }}
+      
 
     steps:
       - name: 코드 체크아웃
