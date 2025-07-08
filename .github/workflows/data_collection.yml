@@ -2,31 +2,33 @@
 name: 공공데이터 수집
 
 on:
-  # 수동(trigger) 시 입력값 정의
   workflow_dispatch:
     inputs:
       data_type:
-        description: '실거래(real-estate) vs 미분양(notsold)'
+        description: '실거래(real-estate) vs 미분양(notsold) vs 인구(population)'
         required: true
         type: choice
         default: 'real-estate'
         options:
           - real-estate
           - notsold
+          - population
       region_name:
         description: '시군구 (예: 경상남도 진주시 또는 서울 종로구)'
         required: true
         default: '경상남도 진주시'
+      # 실거래 전용
       start_year:
         description: '실거래 시작 연도 (YYYY)'
         required: false
         default: '2020'
+      # 미분양·인구 공통
       start:
-        description: '미분양 시작 기간 (YYYYMM)'
+        description: '미분양/인구 시작 기간 (YYYYMM)'
         required: false
         default: '202501'
       end:
-        description: '미분양 종료 기간 (YYYYMM)'
+        description: '미분양/인구 종료 기간 (YYYYMM)'
         required: false
         default: '202505'
       output:
@@ -34,19 +36,15 @@ on:
         required: false
         default: 'report.xlsx'
 
-  # 자동 스케줄: 매일 UTC 00:00 (KST 09:00)
-  schedule:
-    - cron: '0 0 * * *'
-
 jobs:
   collect:
     runs-on: ubuntu-latest
 
-    # 레포지토리 루트와 시크릿 키들 환경변수로 설정
     env:
       PYTHONPATH: ${{ github.workspace }}
       PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
       MOLIT_STATS_KEY:     ${{ secrets.MOLIT_STATS_KEY }}
+      SERVICE_POP_KEY:     ${{ secrets.SERVICE_POP_KEY }}
 
     steps:
       - name: 코드 체크아웃
@@ -64,18 +62,32 @@ jobs:
 
       - name: 데이터 수집 실행
         run: |
-          if [ "${{ github.event.inputs.data_type }}" = "real-estate" ]; then
-            python real_estate_report.py \
-              --region-name "${{ github.event.inputs.region_name }}" \
-              --start-year "${{ github.event.inputs.start_year }}" \
-              --output "${{ github.event.inputs.output }}"
-          else
-            python notsold.py \
-              --region-name "${{ github.event.inputs.region_name }}" \
-              --start "${{ github.event.inputs.start }}" \
-              --end "${{ github.event.inputs.end }}" \
-              --output "${{ github.event.inputs.output }}"
-          fi
+          case "${{ github.event.inputs.data_type }}" in
+            real-estate)
+              python real_estate_report.py \
+                --region-name "${{ github.event.inputs.region_name }}" \
+                --start-year "${{ github.event.inputs.start_year }}" \
+                --output "${{ github.event.inputs.output }}"
+              ;;
+            notsold)
+              python notsold.py \
+                --region-name "${{ github.event.inputs.region_name }}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end "${{ github.event.inputs.end }}" \
+                --output "${{ github.event.inputs.output }}"
+              ;;
+            population)
+              python population_report.py \
+                --region-name "${{ github.event.inputs.region_name }}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end "${{ github.event.inputs.end }}" \
+                --output "${{ github.event.inputs.output }}"
+              ;;
+            *)
+              echo "지원하지 않는 data_type: ${{ github.event.inputs.data_type }}"
+              exit 1
+              ;;
+          esac
 
       - name: 결과 업로드
         uses: actions/upload-artifact@v4
