@@ -8,7 +8,7 @@ on:
         description: '요청 데이터'
         required: true
         type: choice
-        default: 'all'
+        default: 'all-in-one'
         options:
           - All-in-one
           - 실거래(매매,전월세,분양권) 데이터
@@ -66,7 +66,7 @@ jobs:
           REGION="${{ github.event.inputs.region_name }}"
           case "${{ github.event.inputs.data_type }}" in
 
-            all)
+            All-in-one)
               # 1) 실거래
               REAL_OUT="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
@@ -89,7 +89,7 @@ jobs:
                 --output "${POP_OUT}"
               ;;
 
-            real-estate)
+            실거래(매매,전월세,분양권) 데이터)
               OUT="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
                 --region-name "${REGION}" \
@@ -97,7 +97,7 @@ jobs:
                 --output "${OUT}"
               ;;
 
-            notsold)
+            미분양 현황)
               OUT="미분양 현황_${REGION}.xlsx"
               python notsold.py \
                 --region-name "${REGION}" \
@@ -106,7 +106,7 @@ jobs:
                 --output "${OUT}"
               ;;
 
-            population)
+            인구 현황)
               OUT="인구 현황_${REGION}.xlsx"
               python population_report.py \
                 --region-name "${REGION}" \
