@@ -92,7 +92,7 @@ def fetch_population_page(srchFrYm, srchToYm, page):
         'lv':         args.lv,
         'regSeCd':    args.regSeCd,
         'type':       'JSON',               # ← JSON 요청
-        'numOfRows':  1000,
+        'numOfRows':  100,
         'pageNo':     page,
     }
     r = requests.get(BASE_POP_URL, params=params, timeout=30)
