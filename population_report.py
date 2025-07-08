@@ -16,6 +16,7 @@ except Exception as e:
     print(f"ERROR: 시군구 코드 CSV를 불러오는 데 실패했습니다 ({CSV_PATH}): {e}")
     sys.exit(1)
 
+
 def get_region_code(region_name: str) -> str:
     """
     region_name: '경기도', '경상남도 진주시', '경기도 수원시 영통구' 등
@@ -48,20 +49,8 @@ def get_region_code(region_name: str) -> str:
 
     if sub.empty:
         raise LookupError(f"CSV에서 '{region_name}'에 맞는 코드를 찾을 수 없습니다.")
-    return sub.iloc[0]["법정동코드"]  # 10자리
+    return sub.iloc[0]["법정동코드"]  # 10자리 완전 코드
 
-def determine_admn_cd(full_code: str, lv: int) -> str:
-    """
-    lv=1 → 시도 단위: 앞 2자리
-    lv=2 → 시군구 단위: 앞 5자리
-    lv>=3 → 읍면동 단위: 전체 10자리
-    """
-    if lv == 1:
-        return full_code[:2]
-    elif lv == 2:
-        return full_code[:5]
-    else:
-        return full_code
 
 # ── 2) CLI 파싱 ──
 parser = argparse.ArgumentParser(description="공공데이터 인구·세대 리포트 생성기")
@@ -73,15 +62,16 @@ parser.add_argument('--end',   help='조회 종료 기간 (YYYYMM)', required=Tr
 parser.add_argument('--output', help='출력 엑셀 파일명', default='population_report.xlsx')
 args = parser.parse_args()
 
-# ── 3) admnCd 결정 ──
+# ── 3) full 법정동코드 결정 ──
 try:
     full_code = get_region_code(args.region_name)
 except Exception as e:
     print("ERROR:", e)
     sys.exit(1)
 
+# lv: 입력 depth에 따른 조회 granularity
 lv = len(args.region_name.split())  # 1=시도, 2=시군구, 3=읍면동
-admn_cd = determine_admn_cd(full_code, lv)
+admn_cd = full_code  # 항상 10자리 법정동코드를 사용
 print(f"▶ 인구·세대 데이터 수집 (lv={lv}, admnCd={admn_cd})…")
 
 # ── 4) API 키 & 엔드포인트 ──
