@@ -5,25 +5,28 @@ on:
   workflow_dispatch:
     inputs:
       data_type:
-        description: '요청 데이터'
+        description: >
+          요청 데이터  
+          • all: All-in-one (실거래 + 미분양 + 인구)  
+          • real-estate: 실거래(매매,전월세,분양권)  
+          • notsold: 미분양 현황  
+          • population: 인구 현황  
         required: true
         type: choice
-        default: 'all-in-one'
+        default: 'all'
         options:
-          - All-in-one
-          - 실거래(매매,전월세,분양권) 데이터
-          - 미분양 현황
-          - 인구 현황
+          - all
+          - real-estate
+          - notsold
+          - population
       region_name:
         description: '시도[ 시군구[ 읍면동]] (예: 경상남도 진주시)'
         required: true
         default: '경상남도 진주시'
-      # 실거래 전용
       start_year:
         description: '실거래 시작 연도 (YYYY)'
         required: false
         default: '2020'
-      # 미분양·인구 공통
       start:
         description: '미분양/인구 시작 기간 (YYYYMM)'
         required: false
@@ -32,10 +35,6 @@ on:
         description: '미분양/인구 종료 기간 (YYYYMM)'
         required: false
         default: '202505'
-      output:
-        description: '출력 파일명 (All-in-one 선택 시 무시됩니다)'
-        required: false
-        default: 'report.xlsx'
 
 jobs:
   collect:
@@ -63,33 +62,34 @@ jobs:
 
       - name: 데이터 수집 실행
         run: |
+          TYPE="${{ github.event.inputs.data_type }}"
           REGION="${{ github.event.inputs.region_name }}"
-          case "${{ github.event.inputs.data_type }}" in
 
-            All-in-one)
+          case "${TYPE}" in
+            all)
               # 1) 실거래
-              REAL_OUT="국토교통부 실거래데이터_${REGION}.xlsx"
+              OUT1="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
                 --region-name "${REGION}" \
                 --start-year "${{ github.event.inputs.start_year }}" \
-                --output "${REAL_OUT}"
+                --output "${OUT1}"
               # 2) 미분양
-              NOTSOLD_OUT="미분양 현황_${REGION}.xlsx"
+              OUT2="미분양 현황_${REGION}.xlsx"
               python notsold.py \
                 --region-name "${REGION}" \
                 --start "${{ github.event.inputs.start }}" \
                 --end   "${{ github.event.inputs.end }}" \
-                --output "${NOTSOLD_OUT}"
-              # 3) 인구·세대
-              POP_OUT="인구 현황_${REGION}.xlsx"
+                --output "${OUT2}"
+              # 3) 인구
+              OUT3="인구 현황_${REGION}.xlsx"
               python population_report.py \
                 --region-name "${REGION}" \
                 --start "${{ github.event.inputs.start }}" \
                 --end   "${{ github.event.inputs.end }}" \
-                --output "${POP_OUT}"
+                --output "${OUT3}"
               ;;
 
-            실거래(매매,전월세,분양권) 데이터)
+            real-estate)
               OUT="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
                 --region-name "${REGION}" \
@@ -97,7 +97,7 @@ jobs:
                 --output "${OUT}"
               ;;
 
-            미분양 현황)
+            notsold)
               OUT="미분양 현황_${REGION}.xlsx"
               python notsold.py \
                 --region-name "${REGION}" \
@@ -106,7 +106,7 @@ jobs:
                 --output "${OUT}"
               ;;
 
-            인구 현황)
+            population)
               OUT="인구 현황_${REGION}.xlsx"
               python population_report.py \
                 --region-name "${REGION}" \
@@ -116,7 +116,7 @@ jobs:
               ;;
 
             *)
-              echo "지원하지 않는 data_type: ${{ github.event.inputs.data_type }}"
+              echo "지원하지 않는 data_type: ${TYPE}"
               exit 1
               ;;
           esac
