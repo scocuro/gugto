@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# real_est데이터 리포트 생성기: real_estate_report.py
+# real_estate_report.py
 
 import argparse
 import os
@@ -66,7 +66,7 @@ if not API_KEY:
 
 BASE_SALE_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 BASE_RENT_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
-BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcSilvTrade"
+BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcAptSilvTrade"
 
 # ── 5) API 호출 + XML→DataFrame 헬퍼 ──
 def fetch_items(url, params):
@@ -107,17 +107,23 @@ def collect_all(base_url, cols, date_key):
                 df = df.loc[:, [*cols, 'dealYear','dealMonth','dealDay']]
                 # 숫자형 변환
                 if 'dealAmount' in df:
-                    df['dealAmount'] = (df['dealAmount']
+                    df['dealAmount'] = (
+                        df['dealAmount']
                         .astype(str).str.replace(',','',regex=False)
-                        .astype(float))
+                        .astype(float)
+                    )
                 if 'deposit' in df:
-                    df['deposit'] = (df['deposit']
+                    df['deposit'] = (
+                        df['deposit']
                         .astype(str).str.replace(',','',regex=False)
-                        .astype(float))
+                        .astype(float)
+                    )
                 if 'monthlyRent' in df:
-                    df['monthlyRent'] = (df['monthlyRent']
+                    df['monthlyRent'] = (
+                        df['monthlyRent']
                         .astype(str).str.replace(',','',regex=False)
-                        .astype(float))
+                        .astype(float)
+                    )
                 if 'excluUseAr' in df:
                     df['excluUseAr_adj'] = (
                         df['excluUseAr'].astype(str)
@@ -144,45 +150,30 @@ print(f"  → {len(df_silv)}건 수집 완료")
 
 # ── 9) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    # 원본(raw) 시트에 칼럼명 변경
-    mapping = {
-        'sggCd':'시군구코드', 'umdNm':'동', 'aptNm':'건물명', 'jibun':'지번',
-        'excluUseAr':'전용면적','dealAmount':'거래가액','dealYear':'거래년도',
-        'dealMonth':'거래월','dealDay':'거래일','excluUseAr_adj':'전용면적(평)',
-        'deposit':'보증금','monthlyRent':'월세'
-    }
-    df_sale.rename(columns=mapping).to_excel(writer, sheet_name='매매(raw)', index=False)
-    df_rent.rename(columns=mapping).to_excel(writer, sheet_name='전세(raw)', index=False)
-    df_silv.rename(columns=mapping).to_excel(writer, sheet_name='분양권(raw)', index=False)
+    df_sale.to_excel(writer, sheet_name='매매(raw)',   index=False)
+    df_rent.to_excel(writer, sheet_name='전세(raw)',   index=False)
+    df_silv.to_excel(writer, sheet_name='분양권(raw)', index=False)
 
     def make_pivot(df, valcol):
-        if df.empty: return pd.DataFrame()
-        g  = df.groupby(['sggNm','umdNm','aptNm','dealYear'], dropna=False)
-        pv = (g.agg(case_count=('dealYear','size'),
-                    avg_value =(valcol,    'mean'),
-                    avg_exclu =('excluUseAr_adj','mean'))
-               .reset_index())
-        # 동적 컬럼명 변경
-        out = pv.copy()
-        out.rename(columns={'sggCd':'시군구코드','umdNm':'동','aptNm':'건물명','dealYear':'거래년도'}, inplace=True)
-        # 각 연도별로 새 이름 매핑
-        for col in list(out.columns):
-            if col.startswith('case_count_'):
-                yyyy = col.split('_')[-1]
-                out.rename(columns={col:f"거래건수({yyyy})"}, inplace=True)
-            if col.startswith('avg_value_'):
-                yyyy = col.split('_')[-1]
-                out.rename(columns={col:f"평균 거래가액({yyyy})"}, inplace=True)
-            if col.startswith('avg_exclu_'):
-                yyyy = col.split('_')[-1]
-                out.rename(columns={col:f"평균 전용면적({yyyy})"}, inplace=True)
+        if df.empty:
+            return pd.DataFrame()
+        g = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
+        pv = g.agg(
+            case_count=('dealYear','size'),
+            avg_value =(valcol,    'mean'),
+            avg_exclu =('excluUseAr_adj','mean')
+        ).reset_index()
+        years = sorted(pv['dealYear'].unique())
+        out = pv[['umdNm','aptNm']].drop_duplicates().reset_index(drop=True)
+        for y in years:
+            sub = pv[pv['dealYear']==y]
+            out[f"거래건수({y})"] = out.merge(sub[['umdNm','aptNm','case_count']], on=['umdNm','aptNm'], how='left')['case_count']
+            out[f"평균 거래가액({y})"] = out.merge(sub[['umdNm','aptNm','avg_value']], on=['umdNm','aptNm'], how='left')['avg_value']
+            out[f"평균 전용면적({y})"] = out.merge(sub[['umdNm','aptNm','avg_exclu']], on=['umdNm','aptNm'], how='left')['avg_exclu']
         return out
 
-    make_pivot(df_sale, 'dealAmount')\
-      .to_excel(writer, sheet_name='매매(수정)', index=False)
-    make_pivot(df_rent, 'deposit')\
-      .to_excel(writer, sheet_name='전세(수정)', index=False)
-    make_pivot(df_silv, 'dealAmount')\
-      .to_excel(writer, sheet_name='분양권(수정)', index=False)
+    make_pivot(df_sale, 'dealAmount').to_excel(writer, sheet_name='매매(수정)', index=False)
+    make_pivot(df_rent, 'deposit').to_excel(writer, sheet_name='전세(수정)', index=False)
+    make_pivot(df_silv, 'dealAmount').to_excel(writer, sheet_name='분양권(수정)', index=False)
 
 print(f"✅ '{args.output}' 에 저장되었습니다.")
