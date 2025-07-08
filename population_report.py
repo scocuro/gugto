@@ -97,7 +97,7 @@ def collect_population(start_ym: str, end_ym: str, level: int):
             'srchToYm':   end_ym,
             'lv':         level,      # 1=광역시도,2=시군구,3=읍면동
             'regSeCd':    '1',        # 전체(1), 거주자(2) 등
-            'type':       'json',
+            'type':       'JSON',
             'numOfRows':  '1000',
             'pageNo':     str(page)
         }
