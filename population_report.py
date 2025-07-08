@@ -18,17 +18,20 @@ except Exception as e:
 
 def get_admmCd(region_name: str) -> str:
     """
-    입력 예시:
-      - '충청남도'
-      - '경상남도 진주시'
-      - '경기도 수원시 영통구'
-    반환: 10자리 법정동코드 (예: '4817000000')
+    '충청남도' 혹은 '경기도 수원시' 혹은 '경기도 수원시 영통구' 형식 입력 → 
+    행정구역코드(10자리) 반환
     """
     parts = region_name.split()
     sido = parts[0]
     if len(parts) == 1:
-        sub = csv_df[csv_df["시도명"] == sido]
+        # 시도만
+        sub = csv_df[
+            (csv_df["시도명"] == sido) &
+            (csv_df["시군구명"].isna()) &
+            (csv_df["읍면동명"].isna())
+        ]
     elif len(parts) == 2:
+        # 시도+시군구
         sigungu = parts[1]
         sub = csv_df[
             (csv_df["시도명"]    == sido) &
@@ -36,61 +39,67 @@ def get_admmCd(region_name: str) -> str:
             (csv_df["읍면동명"].isna())
         ]
     elif len(parts) == 3:
-        full_sigungu = parts[1] + parts[2]
+        # 시도+시군구+읍면동
+        full_sigungu = parts[1]
+        emd = parts[2]
         sub = csv_df[
             (csv_df["시도명"]    == sido) &
-            (csv_df["시군구명"] == full_sigungu)
+            (csv_df["시군구명"] == full_sigungu) &
+            (csv_df["읍면동명"] == emd)
         ]
     else:
-        raise ValueError("‘시도’, ‘시도 시군구’, ‘시도 시군구 읍면동’ 형식만 지원합니다.")
+        raise ValueError("지원되는 형식: '시도', '시도 시군구', '시도 시군구 읍면동'")
+
     if sub.empty:
-        raise LookupError(f"'{region_name}'에 맞는 코드를 CSV에서 찾을 수 없습니다.")
+        raise LookupError(f"코드를 찾을 수 없습니다: '{region_name}'")
     code10 = sub.iloc[0]["법정동코드"]
     if len(code10) != 10:
-        raise ValueError(f"법정동코드 길이가 10자리가 아닙니다: {code10}")
+        raise ValueError(f"코드 길이가 10자리가 아닙니다: {code10}")
     return code10
 
 # ── 2) CLI 파싱 ──
-parser = argparse.ArgumentParser(description="공공데이터 인구·세대수 리포트 생성기")
+parser = argparse.ArgumentParser(description="공공데이터 인구·세대수 리포트")
 parser.add_argument('--region-name', required=True,
-                    help='시도[ 시군구[ 읍면동]] (예: 경상남도 진주시)')
-parser.add_argument('--start', required=True,
-                    help='조회 시작년월 (YYYYMM)')
-parser.add_argument('--end',   required=True,
-                    help='조회 종료년월 (YYYYMM), 시작으로부터 최대 3개월 단위 호출')
+                    help="예: '경기도', '경기도 수원시', '경기도 수원시 영통구'")
+parser.add_argument('--start', required=True, help="조회 시작년월 (YYYYMM)")
+parser.add_argument('--end',   required=True, help="조회 종료년월 (YYYYMM)")
 parser.add_argument('--regSeCd', type=int, default=1,
-                    help='등록구분: 1=전체,2=거주자,3=거주불명자,4=재외국민')
+                    help="등록구분: 1=전체,2=거주자,3=거주불명자,4=재외국민")
 parser.add_argument('--output', default='population_report.xlsx',
-                    help='출력 엑셀 파일명')
+                    help='출력 엑셀파일명')
 args = parser.parse_args()
 
-# ── 3) 10자리 코드 추출 & 호출할 (lv,admmCd) 리스트 준비 ──
-try:
-    code10 = get_admmCd(args.region_name)
-except Exception as e:
-    print("ERROR:", e)
-    sys.exit(1)
-
+# ── 3) 호출할 (lv, admmCd) 목록 준비 ──
 parts = args.region_name.split()
+sido = parts[0]
 calls = []
-# lv=1: 시도 (code10[0:2] + '00000000')
-calls.append((1, code10[:2] + "00000000"))
+
+# lv=1 (시도)
+prov_code = get_admmCd(sido)
+calls.append((1, prov_code))
+
+# lv=2 (시도+시군구) — parts>=2 일 때만
 if len(parts) >= 2:
-    # lv=2: 시군구 (code10[0:5] + '00000')
-    calls.append((2, code10[:5] + "00000"))
+    city_name = parts[1]
+    city_code = get_admmCd(f"{sido} {city_name}")
+    calls.append((2, city_code))
+
+# lv=3 (읍면동) — parts==3 일 때만
 if len(parts) == 3:
-    # lv=3: 읍면동 (full code)
-    calls.append((3, code10))
+    dong_name = parts[2]
+    dong_code = get_admmCd(args.region_name)
+    calls.append((3, dong_code))
 
 # ── 4) API 키 & 엔드포인트 ──
 API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not API_KEY:
     print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
-BASE_POP_URL = "http://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmmPpltnHhStus"
 
-# ── 5) 단일 페이지 호출 ──
-def fetch_population_page(lv, admmCd, fr, to, page):
+BASE_URL = "http://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmmPpltnHhStus"
+
+# ── 5) 단일 페이지 fetch ──
+def fetch_page(lv, admmCd, fr, to, page):
     params = {
         'serviceKey': API_KEY,
         'admmCd':     admmCd,
@@ -102,11 +111,12 @@ def fetch_population_page(lv, admmCd, fr, to, page):
         'numOfRows':  100,
         'pageNo':     page,
     }
-    r = requests.get(BASE_POP_URL, params=params, timeout=30)
+    r = requests.get(BASE_URL, params=params, timeout=30)
     r.raise_for_status()
     js = r.json()
     resp = js.get('Response', {})
     head = resp.get('head', {})
+    # 성공코드는 문자열 '0'
     if head.get('resultCode') != '0':
         return []
     items = resp.get('items', {}).get('item', [])
@@ -115,72 +125,41 @@ def fetch_population_page(lv, admmCd, fr, to, page):
     return items if isinstance(items, list) else [items]
 
 # ── 6) 3개월 단위 분할 ──
-def split_to_quarters(start_yyyymm, end_yyyymm):
-    def to_ym(s):
-        return int(s[:4]), int(s[4:6])
-    def to_str(y,m):
-        return f"{y}{m:02d}"
-    y0,m0 = to_ym(start_yyyymm)
-    ye,me = to_ym(end_yyyymm)
-    chunks = []
-    cy,cm = y0,m0
+def split_to_quarters(start, end):
+    def to_ym(s): return int(s[:4]), int(s[4:6])
+    def to_str(y,m): return f"{y}{m:02d}"
+    y0,m0 = to_ym(start)
+    ye,me = to_ym(end)
+    out = []
+    cy, cm = y0, m0
     while (cy,cm) <= (ye,me):
         total = cy*12 + (cm-1) + 2
-        ey,em = total//12, (total%12)+1
+        ey, em = total//12, (total%12)+1
         if (ey,em) > (ye,me):
             ey,em = ye,me
-        chunks.append((to_str(cy,cm), to_str(ey,em)))
+        out.append((to_str(cy,cm), to_str(ey,em)))
         nxt = ey*12 + (em-1) + 1
-        cy,cm = nxt//12, (nxt%12)+1
-    return chunks
+        cy, cm = nxt//12, (nxt%12)+1
+    return out
 
-# ── 7) 전체 수집 ──
-all_rows = []
-for lv, admm in calls:
+# ── 7) 전 구간 수집 ──
+all_items = []
+for lv, code in calls:
     for fr, to in split_to_quarters(args.start, args.end):
         page = 1
-        print(f"▶ lv={lv}, admmCd={admm} 기간 {fr}→{to} 수집…")
+        print(f"▶ lv={lv}, admmCd={code}, 기간 {fr}→{to} …")
         while True:
-            items = fetch_population_page(lv, admm, fr, to, page)
-            if not items:
+            page_items = fetch_page(lv, code, fr, to, page)
+            if not page_items:
                 break
-            # 각 item에 현재 lv와 admmCd 정보는 필요 없으므로 그냥 수집
-            all_rows.extend(items)
+            # 같은 구조지만, lv=3일 땐 'emdNm'이 들어있음
+            all_items.extend(page_items)
             page += 1
 
-df = pd.DataFrame(all_rows)
-print(f"  → 총 {len(df)}건 raw 수집 완료")
+df_raw = pd.DataFrame(all_items)
+print(f"  → 총 {len(df_raw)}건 raw 수집 완료")
 
-# ── 8) 필요한 컬럼만 빼고 이름 바꾸기 ──
-cols = ["statsYm","ctpvNm","sggNm","totNmprCnt","hhCnt","hhNmpr"]
-df = df[cols].copy()
-df.columns = ["시점","시도","시군구","인구 수","세대 수","세대당 인구 수"]
-
-# ── 9) 행정구역 계층별 필터링
-# 예: "경기도 수원시 영통구" 입력 시,
-#   시도 레벨 → 시도명("시도")만, 시군구는 빈칸
-#   시군구 레벨 → 시도+시군구
-#   읍면동 레벨 → 모두 채워짐
-parts = args.region_name.split()
-sido_name = parts[0]
-sgg_name = parts[1] if len(parts)>=2 else None
-emd_name = parts[2] if len(parts)==3 else None
-
-def keep_row(r):
-    if not sgg_name:
-        # 시도만 요청: 시도 레벨(lv=1) 행만
-        return pd.isna(r["시군구"]) or r["시군구"] == ""
-    if not emd_name:
-        # 시도+시군구 요청: 시도 레벨 OR (시군구 == sgg_name)
-        return (pd.isna(r["시군구"]) or r["시군구"]=="") \
-               or (r["시군구"] == sgg_name)
-    # 시도+시군구+읍면동 요청: only 시군구 == full 입력 똑같이 나옴
-    return r["시군구"] == emd_name
-
-df = df[df.apply(keep_row, axis=1)].reset_index(drop=True)
-
-# ── 10) 엑셀 저장 ──
-with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df.to_excel(writer, sheet_name='인구_세대', index=False)
-
-print(f"✅ '{args.output}' 에 저장되었습니다.")
+# ── 8) 필요한 컬럼 뽑아서 한글로 리네임 ──
+# emdNm이 있으면 그걸, 없으면 sggNm을 “시군구”로
+df = pd.DataFrame({
+    "시점": df_raw["]()_
