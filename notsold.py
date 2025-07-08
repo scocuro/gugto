@@ -35,7 +35,6 @@ def parse_region(region_name: str):
 
     prov = PROVINCE_MAP.get(p_in)
     if not prov:
-        # '경남' 같이 도 단위 직접 입력
         prov = p_in.rstrip("도")
         if prov not in PROVINCE_MAP.values():
             raise ValueError(f"지원하지 않는 시도명입니다: '{p_in}'")
@@ -72,41 +71,39 @@ def main():
 
     prov, city, dist = parse_region(args.region_name)
 
-    # 1) 월별 미분양 (2082, style 128)
+    # 1) 시군구별 월별 미분양 (form_id=2082, style_num=128)
     df_mon = fetch_data(2082, 128, args.start, args.end)
     df_mon = df_mon.rename(columns={"호": "미분양현황"})
-    # 부문·규모 필터: '계' 만 남기고
-    df_mon = df_mon[(df_mon["부문"] == "계") & (df_mon["규모"] == "계")]
-    # 시도 필터
+    # 시도별로 먼저 필터
     df_mon = df_mon[df_mon["구분"] == prov]
 
-    # 2) 공사완료 후 미분양 (5328, style 1)
+    # 2) 공사완료 후 미분양 (form_id=5328, style_num=1)
     df_cmp = fetch_data(5328, 1, args.start, args.end)
     df_cmp = df_cmp.rename(columns={"호": "공사완료후미분양호수"})
+    # 여기서만 부문·규모 == '계' 필터
     df_cmp = df_cmp[(df_cmp["부문"] == "계") & (df_cmp["규모"] == "계")]
     df_cmp = df_cmp[df_cmp["구분"] == prov]
 
-    # 데이터 병합 및 시트별 저장
+    # 병합해서 시트별로 저장
     sheets = {}
-
-    def make_sheet(key_name, df_m, df_c):
-        m = df_m[["date", "미분양현황"]].copy()
-        c = df_c[["date", "공사완료후미분양호수"]].copy()
+    def make_sheet(name, m_df, c_df):
+        m = m_df[["date", "미분양현황"]].copy()
+        c = c_df[["date", "공사완료후미분양호수"]].copy()
         out = pd.merge(m, c, on="date", how="left")
-        sheets[key_name] = out
+        sheets[name] = out
 
     # (1) 도 전체
     make_sheet(prov, df_mon, df_cmp)
     # (2) 시 단위
     if city:
-        m2 = df_mon[df_mon["시군구"] == city]
-        c2 = df_cmp[df_cmp["시군구"] == city]
-        make_sheet(city, m2, c2)
+        make_sheet(city,
+                   df_mon[df_mon["시군구"] == city],
+                   df_cmp[df_cmp["시군구"] == city])
     # (3) 구 단위
     if dist:
-        m3 = df_mon[df_mon["시군구"] == dist]
-        c3 = df_cmp[df_cmp["시군구"] == dist]
-        make_sheet(dist, m3, c3)
+        make_sheet(dist,
+                   df_mon[df_mon["시군구"] == dist],
+                   df_cmp[df_cmp["시군구"] == dist])
 
     # Excel 쓰기
     with pd.ExcelWriter(args.output) as writer:
