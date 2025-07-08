@@ -62,9 +62,9 @@ else:
         sys.exit(1)
 
 # ── 4) 환경변수로부터 서비스키 ──
-SERVICE_KEY = os.getenv('SERVICE_POP_KEY')
+SERVICE_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not SERVICE_KEY:
-    print("ERROR: SERVICE_POP_KEY 환경변수를 설정하세요.")
+    print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
 
 # ── 5) API 엔드포인트 ──
