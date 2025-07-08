@@ -94,36 +94,16 @@ def fetch_population_page(srchFrYm, srchToYm, page):
         'numOfRows':  100,
         'pageNo':     page,
     }
-    # --- DEBUG: 파라미터 출력
-    print(f">>> DEBUG: fetch_population_page params = {params}")
-    # --- DEBUG: 실제 요청 URL 보기
-    req = requests.Request('GET', BASE_POP_URL, params=params).prepare()
-    print(f">>> DEBUG: Request URL = {req.url}")
-    session = requests.Session()
-    r = session.send(req, timeout=30)
-    # --- DEBUG: 상태 코드, 헤더
-    print(f">>> DEBUG: status_code = {r.status_code}, Content-Type = {r.headers.get('content-type')}")
-    # --- DEBUG: 응답 본문 앞부분
-    text_snippet = r.text.replace('\n', ' ')[:300]
-    print(f">>> DEBUG: response.text[:300] = {text_snippet!r}")
-    # 파싱
-    try:
-        js = r.json()
-    except Exception as e:
-        print(f">>> DEBUG: JSON 디코드 실패: {e}")
+    r = requests.get(BASE_POP_URL, params=params, timeout=30)
+    r.raise_for_status()
+    js = r.json()
+    # ── JSON 구조: { "Response": { "head": {...}, "items": { "item": [...] } } }
+    resp = js.get('Response', {})
+    head = resp.get('head', {})
+    # 성공 코드는 "0" (NORMAL_SERVICE)
+    if head.get('resultCode') != '0':
         return []
-    # --- DEBUG: JSON 키 확인
-    print(f">>> DEBUG: JSON top-level keys = {list(js.keys())}")
-    resp = js.get('response', {})
-    head = resp.get('header', {})
-    # resultCode가 '00'이 아니면 데이터 없음
-    code = head.get('resultCode')
-    msg  = head.get('resultMsg')
-    print(f">>> DEBUG: resultCode = {code}, resultMsg = {msg}")
-    if code != '00':
-        return []
-    body = resp.get('body', {})
-    items = body.get('items', {}).get('item', [])
+    items = resp.get('items', {}).get('item', [])
     if not items:
         return []
     return items if isinstance(items, list) else [items]
@@ -132,7 +112,7 @@ def fetch_population_page(srchFrYm, srchToYm, page):
 def split_to_quarters(start_yyyymm, end_yyyymm):
     """start≤end 사이를 3개월 간격의 (fr,to) 튜플 리스트로 분할."""
     def to_ym(s):
-        y = int(s[:4]); m = int(s[4:6])
+        y, m = int(s[:4]), int(s[4:6])
         return y, m
     def to_str(y, m):
         return f"{y}{m:02d}"
@@ -141,15 +121,16 @@ def split_to_quarters(start_yyyymm, end_yyyymm):
     chunks = []
     cur_y, cur_m = y0, m0
     while (cur_y, cur_m) <= (ye, me):
-        total_month = cur_y*12 + (cur_m-1) + 2
-        ey = total_month // 12
-        em = (total_month % 12) + 1
+        # 3개월 구간의 종료 계산
+        total = cur_y*12 + (cur_m-1) + 2
+        ey = total // 12
+        em = (total % 12) + 1
         if (ey, em) > (ye, me):
             ey, em = ye, me
         chunks.append((to_str(cur_y, cur_m), to_str(ey, em)))
+        # 다음 시작은 종료 다음 달
         nxt = ey*12 + (em-1) + 1
-        cur_y = nxt // 12
-        cur_m = (nxt % 12) + 1
+        cur_y, cur_m = nxt // 12, (nxt % 12) + 1
     return chunks
 
 # ── 7) 전체 수집 ──
@@ -157,20 +138,16 @@ def collect_population():
     all_rows = []
     for fr, to in split_to_quarters(args.start, args.end):
         page = 1
-        print(f">>> DEBUG: collecting period {fr} → {to}")
+        print(f"▶ 기간 {fr} → {to} 수집 중…")
         while True:
-            try:
-                items = fetch_population_page(fr, to, page)
-            except Exception as e:
-                print(f"WARNING: 페이지 {page} 호출 실패: {e}")
-                break
+            items = fetch_population_page(fr, to, page)
             if not items:
                 break
             all_rows.extend(items)
             page += 1
     return pd.DataFrame(all_rows)
 
-# ── 8) 데이터 수집 실행 ──
+# ── 8) 실행 & 결과 ──
 print(f"▶ 인구·세대 데이터 수집: {args.start} → {args.end} (lv={args.lv})")
 df_pop = collect_population()
 print(f"  → {len(df_pop)}건 수집 완료")
@@ -179,7 +156,7 @@ print(f"  → {len(df_pop)}건 수집 완료")
 if df_pop.empty:
     print("⚠️ 조회된 데이터가 없습니다. 기간과 레벨을 확인하세요.")
 else:
-    # 날짜순 정렬
+    # (필요시 정렬)
     if 'srchToYm' in df_pop.columns:
         df_pop = df_pop.sort_values('srchToYm')
     with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
