@@ -27,18 +27,18 @@ PROVINCE_MAP = {
 def parse_region(region_name: str):
     parts = region_name.strip().split()
     if len(parts) == 1:
-        p_in, c_in, d_in = parts[0], None, None
+        p, c, d = parts[0], None, None
     elif len(parts) == 2:
-        p_in, c_in, d_in = parts[0], parts[1], None
+        p, c, d = parts[0], parts[1], None
     else:
-        p_in, c_in, d_in = parts[0], parts[1], parts[2]
+        p, c, d = parts[0], parts[1], parts[2]
 
-    prov = PROVINCE_MAP.get(p_in)
+    prov = PROVINCE_MAP.get(p)
     if not prov:
-        prov = p_in.rstrip("도")
+        prov = p.rstrip("도")
         if prov not in PROVINCE_MAP.values():
-            raise ValueError(f"지원하지 않는 시도명입니다: '{p_in}'")
-    return prov, c_in, d_in
+            raise ValueError(f"지원하지 않는 시도명입니다: '{p}'")
+    return prov, c, d
 
 def fetch_data(form_id: int, style_num: int, start_dt: str, end_dt: str) -> pd.DataFrame:
     params = {
@@ -56,7 +56,7 @@ def fetch_data(form_id: int, style_num: int, start_dt: str, end_dt: str) -> pd.D
     js = r.json()
     items = js.get("result_data", {}).get("formList")
     if items is None:
-        raise KeyError(f"응답 형식이 예상과 다릅니다: {list(js.keys())}")
+        raise KeyError(f"응답 형식이 예상과 다릅니다: {js.keys()}")
     return pd.DataFrame(items)
 
 def main():
@@ -73,39 +73,47 @@ def main():
 
     # 1) 시군구별 월별 미분양 (form_id=2082, style_num=128)
     df_mon = fetch_data(2082, 128, args.start, args.end)
-    df_mon = df_mon.rename(columns={"호": "미분양현황"})
-    # 시도별로 먼저 필터
-    df_mon = df_mon[df_mon["구분"] == prov]
+    # '호' -> '미분양현황' 이 필요하면 uncomment
+    # df_mon.rename(columns={"호": "미분양현황"}, inplace=True)
 
     # 2) 공사완료 후 미분양 (form_id=5328, style_num=1)
     df_cmp = fetch_data(5328, 1, args.start, args.end)
-    df_cmp = df_cmp.rename(columns={"호": "공사완료후미분양호수"})
+    df_cmp.rename(columns={"호": "공사완료후미분양호수"}, inplace=True)
     # 여기서만 부문·규모 == '계' 필터
     df_cmp = df_cmp[(df_cmp["부문"] == "계") & (df_cmp["규모"] == "계")]
-    df_cmp = df_cmp[df_cmp["구분"] == prov]
 
-    # 병합해서 시트별로 저장
     sheets = {}
-    def make_sheet(name, m_df, c_df):
-        m = m_df[["date", "미분양현황"]].copy()
-        c = c_df[["date", "공사완료후미분양호수"]].copy()
-        out = pd.merge(m, c, on="date", how="left")
-        sheets[name] = out
 
-    # (1) 도 전체
-    make_sheet(prov, df_mon, df_cmp)
-    # (2) 시 단위
+    # -- province-level: 시군구 '계' 만
+    df_mon_prov = df_mon[(df_mon["구분"] == prov) & (df_mon["시군구"] == "계")]
+    df_cmp_prov = df_cmp[(df_cmp["구분"] == prov) & (df_cmp["시군구"] == "계")]
+    sheets[prov] = pd.merge(
+        df_mon_prov[["date", "미분양현황"]],
+        df_cmp_prov[["date", "공사완료후미분양호수"]],
+        on="date", how="left"
+    )
+
+    # -- city-level
     if city:
-        make_sheet(city,
-                   df_mon[df_mon["시군구"] == city],
-                   df_cmp[df_cmp["시군구"] == city])
-    # (3) 구 단위
-    if dist:
-        make_sheet(dist,
-                   df_mon[df_mon["시군구"] == dist],
-                   df_cmp[df_cmp["시군구"] == dist])
+        df_mon_city = df_mon[(df_mon["구분"] == prov) & (df_mon["시군구"] == city)]
+        df_cmp_city = df_cmp[(df_cmp["구분"] == prov) & (df_cmp["시군구"] == city)]
+        sheets[city] = pd.merge(
+            df_mon_city[["date", "미분양현황"]],
+            df_cmp_city[["date", "공사완료후미분양호수"]],
+            on="date", how="left"
+        )
 
-    # Excel 쓰기
+    # -- district-level
+    if dist:
+        df_mon_dist = df_mon[(df_mon["구분"] == prov) & (df_mon["시군구"] == dist)]
+        df_cmp_dist = df_cmp[(df_cmp["구분"] == prov) & (df_cmp["시군구"] == dist)]
+        sheets[dist] = pd.merge(
+            df_mon_dist[["date", "미분양현황"]],
+            df_cmp_dist[["date", "공사완료후미분양호수"]],
+            on="date", how="left"
+        )
+
+    # Excel에 쓰기
     with pd.ExcelWriter(args.output) as writer:
         for name, df in sheets.items():
             df.to_excel(writer, sheet_name=name, index=False)
