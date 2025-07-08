@@ -45,7 +45,6 @@ def get_admmCd(region_name: str) -> str:
         raise ValueError("‘시도’, ‘시도 시군구’, ‘시도 시군구 읍면동’ 형식만 지원합니다.")
     if sub.empty:
         raise LookupError(f"'{region_name}'에 맞는 코드를 CSV에서 찾을 수 없습니다.")
-    # 법정동코드 전체 10자리
     code10 = sub.iloc[0]["법정동코드"]
     if len(code10) != 10:
         raise ValueError(f"법정동코드 길이가 10자리가 아닙니다: {code10}")
@@ -86,23 +85,44 @@ BASE_POP_URL = "http://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmmPpltnHh
 def fetch_population_page(srchFrYm, srchToYm, page):
     params = {
         'serviceKey': API_KEY,
-        'admmCd':     admmCd,                # ← 수정: admmCd (m m)
+        'admmCd':     admmCd,
         'srchFrYm':   srchFrYm,
         'srchToYm':   srchToYm,
         'lv':         args.lv,
         'regSeCd':    args.regSeCd,
-        'type':       'JSON',               # ← JSON 요청
+        'type':       'JSON',
         'numOfRows':  100,
         'pageNo':     page,
     }
-    r = requests.get(BASE_POP_URL, params=params, timeout=30)
-    r.raise_for_status()
-    js = r.json()
-    head = js.get('response', {}).get('header', {})
-    # resultCode가 00이 아닐 경우 데이터 없음
-    if head.get('resultCode') != '00':
+    # --- DEBUG: 파라미터 출력
+    print(f">>> DEBUG: fetch_population_page params = {params}")
+    # --- DEBUG: 실제 요청 URL 보기
+    req = requests.Request('GET', BASE_POP_URL, params=params).prepare()
+    print(f">>> DEBUG: Request URL = {req.url}")
+    session = requests.Session()
+    r = session.send(req, timeout=30)
+    # --- DEBUG: 상태 코드, 헤더
+    print(f">>> DEBUG: status_code = {r.status_code}, Content-Type = {r.headers.get('content-type')}")
+    # --- DEBUG: 응답 본문 앞부분
+    text_snippet = r.text.replace('\n', ' ')[:300]
+    print(f">>> DEBUG: response.text[:300] = {text_snippet!r}")
+    # 파싱
+    try:
+        js = r.json()
+    except Exception as e:
+        print(f">>> DEBUG: JSON 디코드 실패: {e}")
         return []
-    body = js['response']['body']
+    # --- DEBUG: JSON 키 확인
+    print(f">>> DEBUG: JSON top-level keys = {list(js.keys())}")
+    resp = js.get('response', {})
+    head = resp.get('header', {})
+    # resultCode가 '00'이 아니면 데이터 없음
+    code = head.get('resultCode')
+    msg  = head.get('resultMsg')
+    print(f">>> DEBUG: resultCode = {code}, resultMsg = {msg}")
+    if code != '00':
+        return []
+    body = resp.get('body', {})
     items = body.get('items', {}).get('item', [])
     if not items:
         return []
@@ -121,18 +141,15 @@ def split_to_quarters(start_yyyymm, end_yyyymm):
     chunks = []
     cur_y, cur_m = y0, m0
     while (cur_y, cur_m) <= (ye, me):
-        # 2개월 더해 3개월 범위 완료 시점 계산
         total_month = cur_y*12 + (cur_m-1) + 2
         ey = total_month // 12
         em = (total_month % 12) + 1
-        # 잘라낼 종료 = min(ey, em, 실제 종료)
         if (ey, em) > (ye, me):
             ey, em = ye, me
         chunks.append((to_str(cur_y, cur_m), to_str(ey, em)))
-        # 다음 시작 = ey, em + 1개월
-        nxt_total = ey*12 + (em-1) + 1
-        cur_y = nxt_total // 12
-        cur_m = (nxt_total % 12) + 1
+        nxt = ey*12 + (em-1) + 1
+        cur_y = nxt // 12
+        cur_m = (nxt % 12) + 1
     return chunks
 
 # ── 7) 전체 수집 ──
@@ -140,6 +157,7 @@ def collect_population():
     all_rows = []
     for fr, to in split_to_quarters(args.start, args.end):
         page = 1
+        print(f">>> DEBUG: collecting period {fr} → {to}")
         while True:
             try:
                 items = fetch_population_page(fr, to, page)
