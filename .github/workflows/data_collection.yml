@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       data_type:
-        description: 'All-in-one(all) vs 실거래(real-estate) vs 미분양(notsold) vs 인구(population)'
+        description: 'All-in-one(All-in-one) vs 실거래(실거래(매매,전월세,분양권) 데이터) vs 미분양(미분양 현황) vs 인구(인구 현황)'
         required: true
         type: choice
         default: 'all'
