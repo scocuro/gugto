@@ -121,3 +121,22 @@ def collect_population(start: str, end: str, lv: int) -> pd.DataFrame:
             'regSeCd':    '1',     # 전체 세대+인구
             'type':       'JSON',
             'numOfRows':  1000,
+            'pageNo':     page,
+        }
+        recs = fetch_population_page(params)
+        if not recs:
+            break
+        rows.extend(recs)
+        page += 1
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+# ── 7) 수집 & 엑셀 저장 ──
+print("▶ 데이터 수집 중…")
+df_pop = collect_population(args.start, args.end, lv)
+print(f"  → {len(df_pop)}건 수집 완료")
+
+with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
+    df_pop.to_excel(writer, sheet_name='인구세대(raw)', index=False)
+
+print(f"✅ '{args.output}' 에 저장되었습니다.")
