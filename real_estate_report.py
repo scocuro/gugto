@@ -1,9 +1,4 @@
-Below is the fixed `real_estate_report.py`. Two things changed:
 
-1. **Service‐key**: we now first look for your MOLIT stats key (`MOLIT_STATS_KEY`), falling back to `PUBLIC_DATA_API_KEY`.
-2. **분양권 URL**: corrected to the real production endpoint (`getRTMSDataSvcSilvTrade`).
-
-```python
 #!/usr/bin/env python3
 # real_estate_report.py
 
