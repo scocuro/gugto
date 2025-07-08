@@ -162,4 +162,34 @@ print(f"  → 총 {len(df_raw)}건 raw 수집 완료")
 # ── 8) 필요한 컬럼 뽑아서 한글로 리네임 ──
 # emdNm이 있으면 그걸, 없으면 sggNm을 “시군구”로
 df = pd.DataFrame({
-    "시점": df_raw["]()_
+    "시점": df_raw["statsYm"],
+    "시도": df_raw["ctpvNm"],
+    "시군구": df_raw.get("emdNm", df_raw.get("sggNm")),
+    "인구 수":     pd.to_numeric(df_raw["totNmprCnt"], errors="coerce"),
+    "세대 수":     pd.to_numeric(df_raw["hhCnt"],      errors="coerce"),
+    "세대당 인구 수": pd.to_numeric(df_raw["hhNmpr"], errors="coerce"),
+})
+
+# ── 9) 입력 계층에 맞춰 필터링 ──
+# 언제나 “시도(level1)” 행은 ctpvNm==sido & 시군구 빈칸
+# level2 요청 땐 city_name, level3 요청 땐 dong_name 까지 포함
+def keep(r):
+    # 1) 시도 레벨
+    if r["시도"] == sido and (pd.isna(r["시군구"]) or r["시군구"]==""):
+        return True
+    # 2) 시군구 레벨 (parts>=2)
+    if len(parts) >= 2 and r["시군구"] == parts[1]:
+        return True
+    # 3) 읍면동 레벨 (parts==3)
+    if len(parts) == 3 and r["시군구"] == parts[2]:
+        return True
+    return False
+
+df = df[df.apply(keep, axis=1)].reset_index(drop=True)
+print(f"  → 필터 후 {len(df)}건")
+
+# ── 10) 엑셀 저장 ──
+with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
+    df.to_excel(writer, sheet_name='인구_세대', index=False)
+
+print(f"✅ '{args.output}' 에 저장되었습니다.")
