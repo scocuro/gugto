@@ -72,7 +72,7 @@ BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSData
 COL_MAP = {
     'sggNm': '시군구', 'sggCd': '시군구코드', 'umdNm': '동',
     'aptNm': '건물명', 'jibun': '지번', 'excluUseAr': '전용면적',
-    'dealAmount': '거래가액', 'buildYear': '준공년',  # buildYear 그대로 두셔도 되고 매핑 추가
+    'dealAmount': '거래가액', 'buildYear': '준공년',
     'dealYear': '거래년도', 'dealMonth': '거래월', 'dealDay': '거래일',
     'excluUseAr_adj': '전용면적(평)',
     'deposit': '보증금', 'monthlyRent': '월세'
@@ -114,30 +114,21 @@ def collect_all(base_url, cols, date_key):
                     break
                 df = pd.DataFrame(recs)
                 df = df.loc[:, [*cols, 'dealYear','dealMonth','dealDay']]
-                # 숫자형 변환
                 if 'dealAmount' in df:
                     df['dealAmount'] = (
-                        df['dealAmount'].astype(str)
-                           .str.replace(',','',regex=False)
-                           .astype(float)
+                        df['dealAmount'].astype(str).str.replace(',','',regex=False).astype(float)
                     )
                 if 'deposit' in df:
                     df['deposit'] = (
-                        df['deposit'].astype(str)
-                          .str.replace(',','',regex=False)
-                          .astype(float)
+                        df['deposit'].astype(str).str.replace(',','',regex=False).astype(float)
                     )
                 if 'monthlyRent' in df:
                     df['monthlyRent'] = (
-                        df['monthlyRent'].astype(str)
-                          .str.replace(',','',regex=False)
-                          .astype(float)
+                        df['monthlyRent'].astype(str).str.replace(',','',regex=False).astype(float)
                     )
                 if 'excluUseAr' in df:
                     df['excluUseAr_adj'] = (
-                        df['excluUseAr'].astype(str)
-                                        .str.replace(',','',regex=False)
-                                        .astype(float)
+                        df['excluUseAr'].astype(str).str.replace(',','',regex=False).astype(float)
                         * 121/400
                     )
                 rows.append(df)
@@ -159,37 +150,38 @@ print(f"  → {len(df_silv)}건 수집 완료")
 
 # ── 10) 피벗 생성 함수 ──
 def make_pivot(df, valcol_eng):
-    """원본 df 에 영어 컬럼명으로 피벗을 만들고, 리턴 전 한국어 칼럼명으로 변경."""
+    years = sorted(df['dealYear'].unique())
     g = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
     pv = g.agg(
-        **{f'case_count_{y}': ('dealYear','size') for y in sorted(df['dealYear'].unique())},
-        **{f'avg_value_{y}': (valcol_eng, 'mean') for y in sorted(df['dealYear'].unique())},
-        **{f'avg_exclu_{y}': ('excluUseAr_adj','mean') for y in sorted(df['dealYear'].unique())}
+        **{f'case_count_{y}': ('dealYear','size') for y in years},
+        **{f'avg_value_{y}': (valcol_eng,'mean') for y in years},
+        **{f'avg_exclu_{y}': ('excluUseAr_adj','mean') for y in years}
     ).reset_index()
-
     # 영어→한국어 매핑
     rename_map = {
-        'umdNm': '동',
-        'aptNm': '건물명',
-        'dealYear': '거래년도'
+        'umdNm': '동', 'aptNm': '건물명', 'dealYear': '거래년도'
     }
-    for y in sorted(df['dealYear'].unique()):
+    for y in years:
         rename_map[f'case_count_{y}'] = f'거래건수({y})'
         rename_map[f'avg_value_{y}']   = f'평균 거래가액({y})'
         rename_map[f'avg_exclu_{y}']   = f'평균 전용면적({y})'
-
     return pv.rename(columns=rename_map)
 
 # ── 11) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    # (1) 원본 시트: 영어→한국어 컬럼명 변경
-    for df, name in [(df_sale, '매매(raw)'), (df_rent, '전세(raw)'), (df_silv, '분양권(raw)')]:
-        df_kr = df.rename(columns=COL_MAP)
-        df_kr.to_excel(writer, sheet_name=name, index=False)
+    # 11-1) raw 시트
+    for df, name in [(df_sale,'매매(raw)'), (df_rent,'전세(raw)'), (df_silv,'분양권(raw)')]:
+        df.rename(columns=COL_MAP).to_excel(writer, sheet_name=name, index=False)
 
-    # (2) 피벗 시트
-    make_pivot(df_sale,   'dealAmount').to_excel(writer, sheet_name='매매(수정)',   index=False)
-    make_pivot(df_rent,   'deposit').to_excel(writer, sheet_name='전세(수정)',   index=False)
-    make_pivot(df_silv,   'dealAmount').to_excel(writer, sheet_name='분양권(수정)', index=False)
+    # 11-2) pivot 시트 — 빈 데이터일 땐 건너뛰기
+    if not df_sale.empty:
+        make_pivot(df_sale, 'dealAmount')  \
+            .to_excel(writer, sheet_name='매매(수정)', index=False)
+    if not df_rent.empty:
+        make_pivot(df_rent, 'deposit')    \
+            .to_excel(writer, sheet_name='전세(수정)', index=False)
+    if not df_silv.empty:
+        make_pivot(df_silv, 'dealAmount') \
+            .to_excel(writer, sheet_name='분양권(수정)', index=False)
 
 print(f"✅ '{args.output}'에 저장되었습니다.")
