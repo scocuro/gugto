@@ -64,7 +64,7 @@ if not API_KEY:
     print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
 
-BASE_SALE_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
+BASE_SALE_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"
 BASE_RENT_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
 BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcAptSilvTrade"
 
@@ -106,8 +106,7 @@ def collect_all(base_url, cols, date_key):
                     'LAWD_CD':    region_code,
                     date_key:     ymd,
                     'pageNo':     page,
-                    'numOfRows':  1000,
-                    'resultType': 'xml'
+                    'numOfRows':  1000
                 }
                 recs = fetch_items(base_url, params)
                 if not recs:
