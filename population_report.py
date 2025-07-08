@@ -31,14 +31,14 @@ def get_admmCd(region_name: str) -> str:
     elif len(parts) == 2:
         sigungu = parts[1]
         sub = csv_df[
-            (csv_df["시도명"] == sido) &
+            (csv_df["시도명"]    == sido) &
             (csv_df["시군구명"] == sigungu) &
             (csv_df["읍면동명"].isna())
         ]
     elif len(parts) == 3:
         full_sigungu = parts[1] + parts[2]
         sub = csv_df[
-            (csv_df["시도명"] == sido) &
+            (csv_df["시도명"]    == sido) &
             (csv_df["시군구명"] == full_sigungu)
         ]
     else:
@@ -57,38 +57,46 @@ parser.add_argument('--region-name', required=True,
 parser.add_argument('--start', required=True,
                     help='조회 시작년월 (YYYYMM)')
 parser.add_argument('--end',   required=True,
-                    help='조회 종료년월 (YYYYMM), 시작으로부터 최대 3개월 이내여야 함')
-parser.add_argument('--lv',     type=int, default=2,
-                    help='조회레벨: 1=광역시도,2=시군구,3=읍면동,4=읍면동통합')
+                    help='조회 종료년월 (YYYYMM), 시작으로부터 최대 3개월 단위 호출')
 parser.add_argument('--regSeCd', type=int, default=1,
                     help='등록구분: 1=전체,2=거주자,3=거주불명자,4=재외국민')
 parser.add_argument('--output', default='population_report.xlsx',
                     help='출력 엑셀 파일명')
 args = parser.parse_args()
 
-# ── 3) 시군구코드 결정 ──
+# ── 3) 10자리 코드 추출 & 호출할 (lv,admmCd) 리스트 준비 ──
 try:
-    admmCd = get_admmCd(args.region_name)
+    code10 = get_admmCd(args.region_name)
 except Exception as e:
     print("ERROR:", e)
     sys.exit(1)
+
+parts = args.region_name.split()
+calls = []
+# lv=1: 시도 (code10[0:2] + '00000000')
+calls.append((1, code10[:2] + "00000000"))
+if len(parts) >= 2:
+    # lv=2: 시군구 (code10[0:5] + '00000')
+    calls.append((2, code10[:5] + "00000"))
+if len(parts) == 3:
+    # lv=3: 읍면동 (full code)
+    calls.append((3, code10))
 
 # ── 4) API 키 & 엔드포인트 ──
 API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not API_KEY:
     print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
-
 BASE_POP_URL = "http://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmmPpltnHhStus"
 
 # ── 5) 단일 페이지 호출 ──
-def fetch_population_page(srchFrYm, srchToYm, page):
+def fetch_population_page(lv, admmCd, fr, to, page):
     params = {
         'serviceKey': API_KEY,
         'admmCd':     admmCd,
-        'srchFrYm':   srchFrYm,
-        'srchToYm':   srchToYm,
-        'lv':         args.lv,
+        'srchFrYm':   fr,
+        'srchToYm':   to,
+        'lv':         lv,
         'regSeCd':    args.regSeCd,
         'type':       'JSON',
         'numOfRows':  100,
@@ -97,10 +105,8 @@ def fetch_population_page(srchFrYm, srchToYm, page):
     r = requests.get(BASE_POP_URL, params=params, timeout=30)
     r.raise_for_status()
     js = r.json()
-    # ── JSON 구조: { "Response": { "head": {...}, "items": { "item": [...] } } }
     resp = js.get('Response', {})
     head = resp.get('head', {})
-    # 성공 코드는 "0" (NORMAL_SERVICE)
     if head.get('resultCode') != '0':
         return []
     items = resp.get('items', {}).get('item', [])
@@ -108,57 +114,73 @@ def fetch_population_page(srchFrYm, srchToYm, page):
         return []
     return items if isinstance(items, list) else [items]
 
-# ── 6) 조회 기간을 3개월 단위로 분할 ──
+# ── 6) 3개월 단위 분할 ──
 def split_to_quarters(start_yyyymm, end_yyyymm):
-    """start≤end 사이를 3개월 간격의 (fr,to) 튜플 리스트로 분할."""
     def to_ym(s):
-        y, m = int(s[:4]), int(s[4:6])
-        return y, m
-    def to_str(y, m):
+        return int(s[:4]), int(s[4:6])
+    def to_str(y,m):
         return f"{y}{m:02d}"
-    y0, m0 = to_ym(start_yyyymm)
-    ye, me = to_ym(end_yyyymm)
+    y0,m0 = to_ym(start_yyyymm)
+    ye,me = to_ym(end_yyyymm)
     chunks = []
-    cur_y, cur_m = y0, m0
-    while (cur_y, cur_m) <= (ye, me):
-        # 3개월 구간의 종료 계산
-        total = cur_y*12 + (cur_m-1) + 2
-        ey = total // 12
-        em = (total % 12) + 1
-        if (ey, em) > (ye, me):
-            ey, em = ye, me
-        chunks.append((to_str(cur_y, cur_m), to_str(ey, em)))
-        # 다음 시작은 종료 다음 달
+    cy,cm = y0,m0
+    while (cy,cm) <= (ye,me):
+        total = cy*12 + (cm-1) + 2
+        ey,em = total//12, (total%12)+1
+        if (ey,em) > (ye,me):
+            ey,em = ye,me
+        chunks.append((to_str(cy,cm), to_str(ey,em)))
         nxt = ey*12 + (em-1) + 1
-        cur_y, cur_m = nxt // 12, (nxt % 12) + 1
+        cy,cm = nxt//12, (nxt%12)+1
     return chunks
 
 # ── 7) 전체 수집 ──
-def collect_population():
-    all_rows = []
+all_rows = []
+for lv, admm in calls:
     for fr, to in split_to_quarters(args.start, args.end):
         page = 1
-        print(f"▶ 기간 {fr} → {to} 수집 중…")
+        print(f"▶ lv={lv}, admmCd={admm} 기간 {fr}→{to} 수집…")
         while True:
-            items = fetch_population_page(fr, to, page)
+            items = fetch_population_page(lv, admm, fr, to, page)
             if not items:
                 break
+            # 각 item에 현재 lv와 admmCd 정보는 필요 없으므로 그냥 수집
             all_rows.extend(items)
             page += 1
-    return pd.DataFrame(all_rows)
 
-# ── 8) 실행 & 결과 ──
-print(f"▶ 인구·세대 데이터 수집: {args.start} → {args.end} (lv={args.lv})")
-df_pop = collect_population()
-print(f"  → {len(df_pop)}건 수집 완료")
+df = pd.DataFrame(all_rows)
+print(f"  → 총 {len(df)}건 raw 수집 완료")
 
-# ── 9) 엑셀 저장 ──
-if df_pop.empty:
-    print("⚠️ 조회된 데이터가 없습니다. 기간과 레벨을 확인하세요.")
-else:
-    # (필요시 정렬)
-    if 'srchToYm' in df_pop.columns:
-        df_pop = df_pop.sort_values('srchToYm')
-    with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-        df_pop.to_excel(writer, sheet_name='인구_세대(raw)', index=False)
-    print(f"✅ '{args.output}' 에 저장되었습니다.")
+# ── 8) 필요한 컬럼만 빼고 이름 바꾸기 ──
+cols = ["statsYm","ctpvNm","sggNm","totNmprCnt","hhCnt","hhNmprCnt"]
+df = df[cols].copy()
+df.columns = ["시점","시도","시군구","인구 수","세대 수","세대당 인구 수"]
+
+# ── 9) 행정구역 계층별 필터링
+# 예: "경기도 수원시 영통구" 입력 시,
+#   시도 레벨 → 시도명("시도")만, 시군구는 빈칸
+#   시군구 레벨 → 시도+시군구
+#   읍면동 레벨 → 모두 채워짐
+parts = args.region_name.split()
+sido_name = parts[0]
+sgg_name = parts[1] if len(parts)>=2 else None
+emd_name = parts[2] if len(parts)==3 else None
+
+def keep_row(r):
+    if not sgg_name:
+        # 시도만 요청: 시도 레벨(lv=1) 행만
+        return pd.isna(r["시군구"]) or r["시군구"] == ""
+    if not emd_name:
+        # 시도+시군구 요청: 시도 레벨 OR (시군구 == sgg_name)
+        return (pd.isna(r["시군구"]) or r["시군구"]=="") \
+               or (r["시군구"] == sgg_name)
+    # 시도+시군구+읍면동 요청: only 시군구 == full 입력 똑같이 나옴
+    return r["시군구"] == emd_name
+
+df = df[df.apply(keep_row, axis=1)].reset_index(drop=True)
+
+# ── 10) 엑셀 저장 ──
+with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
+    df.to_excel(writer, sheet_name='인구_세대', index=False)
+
+print(f"✅ '{args.output}' 에 저장되었습니다.")
