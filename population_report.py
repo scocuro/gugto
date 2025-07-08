@@ -80,7 +80,7 @@ if not API_KEY:
     print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
 
-BASE_POP_URL = "https://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmPpltnHhStus"
+BASE_POP_URL = "http://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmPpltnHhStus"
 
 # ── 5) 단일 페이지 호출 ──
 def fetch_population_page(srchFrYm, srchToYm, page):
