@@ -104,7 +104,7 @@ def collect_all(base_url, cols, date_key):
                 if not recs:
                     break
                 df = pd.DataFrame(recs)
-                df = df.loc[:, [*cols, 'sggNm', 'dealYear','dealMonth','dealDay']]
+                df = df.loc[:, [*cols, 'dealYear','dealMonth','dealDay']]
                 # 숫자형 변환
                 if 'dealAmount' in df:
                     df['dealAmount'] = (df['dealAmount']
@@ -130,9 +130,9 @@ def collect_all(base_url, cols, date_key):
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 # ── 7) 컬럼 리스트 정의 ──
-sale_cols = ['sggCd','sggNm','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYear']
-rent_cols = ['sggCd','sggNm','umdNm','aptNm','jibun','excluUseAr','deposit','monthlyRent','contractType']
-silv_cols = ['sggCd','sggNm','umdNm','aptNm','jibun','excluUseAr','dealAmount']
+sale_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYear']
+rent_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','deposit','monthlyRent','contractType']
+silv_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount']
 
 # ── 8) 실제 수집 ──
 print("▶ 매매 수집…");   df_sale = collect_all(BASE_SALE_URL, sale_cols, 'DEAL_YMD')
@@ -146,7 +146,7 @@ print(f"  → {len(df_silv)}건 수집 완료")
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
     # 원본(raw) 시트에 칼럼명 변경
     mapping = {
-        'sggNm':'시군구', 'sggCd':'시군구코드', 'umdNm':'동', 'aptNm':'건물명', 'jibun':'지번',
+        'sggCd':'시군구코드', 'umdNm':'동', 'aptNm':'건물명', 'jibun':'지번',
         'excluUseAr':'전용면적','dealAmount':'거래가액','dealYear':'거래년도',
         'dealMonth':'거래월','dealDay':'거래일','excluUseAr_adj':'전용면적(평)',
         'deposit':'보증금','monthlyRent':'월세'
@@ -164,7 +164,7 @@ with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
                .reset_index())
         # 동적 컬럼명 변경
         out = pv.copy()
-        out.rename(columns={'sggNm':'시군구','sggCd':'시군구코드','umdNm':'동','aptNm':'건물명','dealYear':'거래년도'}, inplace=True)
+        out.rename(columns={'sggCd':'시군구코드','umdNm':'동','aptNm':'건물명','dealYear':'거래년도'}, inplace=True)
         # 각 연도별로 새 이름 매핑
         for col in list(out.columns):
             if col.startswith('case_count_'):
