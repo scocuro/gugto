@@ -1,6 +1,5 @@
-
 #!/usr/bin/env python3
-# real_estate_report.py
+# real_est데이터 리포트 생성기: real_estate_report.py
 
 import argparse
 import os
@@ -60,7 +59,6 @@ else:
         sys.exit(1)
 
 # ── 4) API 키 & 엔드포인트 ──
-# prefer MOLIT_STATS_KEY, fallback to PUBLIC_DATA_API_KEY
 API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not API_KEY:
     print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
@@ -106,7 +104,7 @@ def collect_all(base_url, cols, date_key):
                 if not recs:
                     break
                 df = pd.DataFrame(recs)
-                df = df.loc[:, [*cols, 'dealYear','dealMonth','dealDay']]
+                df = df.loc[:, [*cols, 'sggNm', 'dealYear','dealMonth','dealDay']]
                 # 숫자형 변환
                 if 'dealAmount' in df:
                     df['dealAmount'] = (df['dealAmount']
@@ -132,9 +130,9 @@ def collect_all(base_url, cols, date_key):
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 # ── 7) 컬럼 리스트 정의 ──
-sale_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYear']
-rent_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','deposit','monthlyRent','contractType']
-silv_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount']
+sale_cols = ['sggCd','sggNm','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYear']
+rent_cols = ['sggCd','sggNm','umdNm','aptNm','jibun','excluUseAr','deposit','monthlyRent','contractType']
+silv_cols = ['sggCd','sggNm','umdNm','aptNm','jibun','excluUseAr','dealAmount']
 
 # ── 8) 실제 수집 ──
 print("▶ 매매 수집…");   df_sale = collect_all(BASE_SALE_URL, sale_cols, 'DEAL_YMD')
@@ -146,27 +144,38 @@ print(f"  → {len(df_silv)}건 수집 완료")
 
 # ── 9) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df_sale.to_excel(writer, sheet_name='매매(raw)',   index=False)
-    df_rent.to_excel(writer, sheet_name='전세(raw)',   index=False)
-    df_silv.to_excel(writer, sheet_name='분양권(raw)', index=False)
+    # 원본(raw) 시트에 칼럼명 변경
+    mapping = {
+        'sggNm':'시군구', 'sggCd':'시군구코드', 'umdNm':'동', 'aptNm':'건물명', 'jibun':'지번',
+        'excluUseAr':'전용면적','dealAmount':'거래가액','dealYear':'거래년도',
+        'dealMonth':'거래월','dealDay':'거래일','excluUseAr_adj':'전용면적(평)',
+        'deposit':'보증금','monthlyRent':'월세'
+    }
+    df_sale.rename(columns=mapping).to_excel(writer, sheet_name='매매(raw)', index=False)
+    df_rent.rename(columns=mapping).to_excel(writer, sheet_name='전세(raw)', index=False)
+    df_silv.rename(columns=mapping).to_excel(writer, sheet_name='분양권(raw)', index=False)
 
     def make_pivot(df, valcol):
         if df.empty: return pd.DataFrame()
-        g  = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
+        g  = df.groupby(['sggNm','umdNm','aptNm','dealYear'], dropna=False)
         pv = (g.agg(case_count=('dealYear','size'),
                     avg_value =(valcol,    'mean'),
                     avg_exclu =('excluUseAr_adj','mean'))
                .reset_index())
-        years = sorted(pv['dealYear'].unique())
-        out = pv[['umdNm','aptNm']].drop_duplicates().reset_index(drop=True)
-        for y in years:
-            sub = pv[pv['dealYear']==y]
-            out[f"case_count_{y}"] = out.merge(sub[['umdNm','aptNm','case_count']],
-                                               on=['umdNm','aptNm'], how='left')['case_count']
-            out[f"avg_value_{y}"]  = out.merge(sub[['umdNm','aptNm','avg_value']],
-                                               on=['umdNm','aptNm'], how='left')['avg_value']
-            out[f"avg_exclu_{y}"]  = out.merge(sub[['umdNm','aptNm','avg_exclu']],
-                                               on=['umdNm','aptNm'], how='left')['avg_exclu']
+        # 동적 컬럼명 변경
+        out = pv.copy()
+        out.rename(columns={'sggNm':'시군구','sggCd':'시군구코드','umdNm':'동','aptNm':'건물명','dealYear':'거래년도'}, inplace=True)
+        # 각 연도별로 새 이름 매핑
+        for col in list(out.columns):
+            if col.startswith('case_count_'):
+                yyyy = col.split('_')[-1]
+                out.rename(columns={col:f"거래건수({yyyy})"}, inplace=True)
+            if col.startswith('avg_value_'):
+                yyyy = col.split('_')[-1]
+                out.rename(columns={col:f"평균 거래가액({yyyy})"}, inplace=True)
+            if col.startswith('avg_exclu_'):
+                yyyy = col.split('_')[-1]
+                out.rename(columns={col:f"평균 전용면적({yyyy})"}, inplace=True)
         return out
 
     make_pivot(df_sale, 'dealAmount')\
