@@ -152,7 +152,7 @@ df = pd.DataFrame(all_rows)
 print(f"  → 총 {len(df)}건 raw 수집 완료")
 
 # ── 8) 필요한 컬럼만 빼고 이름 바꾸기 ──
-cols = ["statsYm","ctpvNm","sggNm","totNmprCnt","hhCnt","hhNmprCnt"]
+cols = ["statsYm","ctpvNm","sggNm","totNmprCnt","hhCnt","hhNmpr"]
 df = df[cols].copy()
 df.columns = ["시점","시도","시군구","인구 수","세대 수","세대당 인구 수"]
 
