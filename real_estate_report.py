@@ -177,6 +177,3 @@ with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
       .to_excel(writer, sheet_name='분양권(수정)', index=False)
 
 print(f"✅ '{args.output}' 에 저장되었습니다.")
-```
-
-— 이제 `MOLIT_STATS_KEY` 환경변수에 **실거래 API 키**를, `PUBLIC_DATA_API_KEY`에 **공공데이터포털 키**를 각각 넣어 주세요. 이 상태에서 다시 실행하시면 정상적으로 데이터가 내려옵니다.
