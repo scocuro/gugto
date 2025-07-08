@@ -75,9 +75,9 @@ except Exception as e:
     sys.exit(1)
 
 # ── 4) API 키 & 엔드포인트 ──
-API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
+API_KEY = os.getenv('POP_KEY')
 if not API_KEY:
-    print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
+    print("ERROR: POP_KEY 환경변수를 설정하세요.")
     sys.exit(1)
 
 BASE_POP_URL = "http://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmPpltnHhStus"
