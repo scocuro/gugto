@@ -5,16 +5,17 @@ on:
   workflow_dispatch:
     inputs:
       data_type:
-        description: '실거래(real-estate) vs 미분양(notsold) vs 인구(population)'
+        description: 'All-in-one(all) vs 실거래(real-estate) vs 미분양(notsold) vs 인구(population)'
         required: true
         type: choice
-        default: 'real-estate'
+        default: 'all'
         options:
+          - all
           - real-estate
           - notsold
           - population
       region_name:
-        description: '시군구 (예: 경상남도 진주시 또는 서울 종로구)'
+        description: '시도[ 시군구[ 읍면동]] (예: 경상남도 진주시)'
         required: true
         default: '경상남도 진주시'
       # 실거래 전용
@@ -32,7 +33,7 @@ on:
         required: false
         default: '202505'
       output:
-        description: '출력 파일명'
+        description: '출력 파일명 (All-in-one 선택 시 무시됩니다)'
         required: false
         default: 'report.xlsx'
 
@@ -44,8 +45,7 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
       PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
       MOLIT_STATS_KEY:     ${{ secrets.MOLIT_STATS_KEY }}
-      POP_KEY:     ${{ secrets.POP_KEY }}
-      
+      POP_KEY:             ${{ secrets.POP_KEY }}
 
     steps:
       - name: 코드 체크아웃
@@ -63,27 +63,58 @@ jobs:
 
       - name: 데이터 수집 실행
         run: |
+          REGION="${{ github.event.inputs.region_name }}"
           case "${{ github.event.inputs.data_type }}" in
-            real-estate)
+
+            all)
+              # 1) 실거래
+              REAL_OUT="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
-                --region-name "${{ github.event.inputs.region_name }}" \
+                --region-name "${REGION}" \
                 --start-year "${{ github.event.inputs.start_year }}" \
-                --output "${{ github.event.inputs.output }}"
-              ;;
-            notsold)
+                --output "${REAL_OUT}"
+              # 2) 미분양
+              NOTSOLD_OUT="미분양 현황_${REGION}.xlsx"
               python notsold.py \
-                --region-name "${{ github.event.inputs.region_name }}" \
+                --region-name "${REGION}" \
                 --start "${{ github.event.inputs.start }}" \
-                --end "${{ github.event.inputs.end }}" \
-                --output "${{ github.event.inputs.output }}"
-              ;;
-            population)
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${NOTSOLD_OUT}"
+              # 3) 인구·세대
+              POP_OUT="인구 현황_${REGION}.xlsx"
               python population_report.py \
-                --region-name "${{ github.event.inputs.region_name }}" \
+                --region-name "${REGION}" \
                 --start "${{ github.event.inputs.start }}" \
-                --end "${{ github.event.inputs.end }}" \
-                --output "${{ github.event.inputs.output }}"
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${POP_OUT}"
               ;;
+
+            real-estate)
+              OUT="국토교통부 실거래데이터_${REGION}.xlsx"
+              python real_estate_report.py \
+                --region-name "${REGION}" \
+                --start-year "${{ github.event.inputs.start_year }}" \
+                --output "${OUT}"
+              ;;
+
+            notsold)
+              OUT="미분양 현황_${REGION}.xlsx"
+              python notsold.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT}"
+              ;;
+
+            population)
+              OUT="인구 현황_${REGION}.xlsx"
+              python population_report.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT}"
+              ;;
+
             *)
               echo "지원하지 않는 data_type: ${{ github.event.inputs.data_type }}"
               exit 1
@@ -93,5 +124,5 @@ jobs:
       - name: 결과 업로드
         uses: actions/upload-artifact@v4
         with:
-          name: report
-          path: ${{ github.event.inputs.output }}
+          name: reports
+          path: '*.xlsx'
