@@ -66,7 +66,7 @@ if not API_KEY:
 
 BASE_SALE_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 BASE_RENT_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
-BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcAptSilvTrade"
+BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcSilvTrade"
 
 # ── 5) API 호출 + XML→DataFrame 헬퍼 ──
 def fetch_items(url, params):
@@ -148,32 +148,46 @@ print(f"  → {len(df_rent)}건 수집 완료")
 print("▶ 분양권 수집…"); df_silv = collect_all(BASE_SILV_URL, silv_cols, 'DEAL_YMD')
 print(f"  → {len(df_silv)}건 수집 완료")
 
-# ── 9) 엑셀 작성 ──
+# ── 9) 칼럼명 한글 매핑 ┙
+COL_MAP = {
+    'sggCd': '시군구코드',
+    'sggNm': '시군구',
+    'umdNm': '동',
+    'aptNm': '건물명',
+    'jibun': '지번',
+    'excluUseAr': '전용면적',
+    'dealAmount': '거래가액',
+    'dealYear': '거래년도',
+    'dealMonth': '거래월',
+    'dealDay': '거래일',
+    'excluUseAr_adj': '전용면적(평)',
+    'deposit': '보증금',
+    'monthlyRent': '월세'
+}
+
+# ── 10) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df_sale.to_excel(writer, sheet_name='매매(raw)',   index=False)
-    df_rent.to_excel(writer, sheet_name='전세(raw)',   index=False)
-    df_silv.to_excel(writer, sheet_name='분양권(raw)', index=False)
+    # raw 시트
+    for df, name in [(df_sale, '매매(raw)'), (df_rent, '전세(raw)'), (df_silv, '분양권(raw)')]:
+        if not df.empty:
+            df = df.rename(columns=COL_MAP)
+        df.to_excel(writer, sheet_name=name, index=False)
 
+    # 피벗 및 매핑 함수
     def make_pivot(df, valcol):
-        if df.empty:
-            return pd.DataFrame()
-        g = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
-        pv = g.agg(
-            case_count=('dealYear','size'),
-            avg_value =(valcol,    'mean'),
-            avg_exclu =('excluUseAr_adj','mean')
-        ).reset_index()
-        years = sorted(pv['dealYear'].unique())
-        out = pv[['umdNm','aptNm']].drop_duplicates().reset_index(drop=True)
-        for y in years:
-            sub = pv[pv['dealYear']==y]
-            out[f"거래건수({y})"] = out.merge(sub[['umdNm','aptNm','case_count']], on=['umdNm','aptNm'], how='left')['case_count']
-            out[f"평균 거래가액({y})"] = out.merge(sub[['umdNm','aptNm','avg_value']], on=['umdNm','aptNm'], how='left')['avg_value']
-            out[f"평균 전용면적({y})"] = out.merge(sub[['umdNm','aptNm','avg_exclu']], on=['umdNm','aptNm'], how='left')['avg_exclu']
-        return out
+        if df.empty: return pd.DataFrame()
+        df = df.rename(columns=COL_MAP)
+        g  = df.groupby(['동','건물명','거래년도'], dropna=False)
+        pv = (g.agg(
+            **{f'거래건수({y})': ('거래년도','size') for y in sorted(df['거래년도'].unique())},
+            **{f'평균 거래가액({y})': (f'거래가액', 'mean') for y in sorted(df['거래년도'].unique())},
+            **{f'평균 전용면적({y})': ('전용면적(평)', 'mean') for y in sorted(df['거래년도'].unique())}
+        )).reset_index()
+        return pv
 
-    make_pivot(df_sale, 'dealAmount').to_excel(writer, sheet_name='매매(수정)', index=False)
-    make_pivot(df_rent, 'deposit').to_excel(writer, sheet_name='전세(수정)', index=False)
-    make_pivot(df_silv, 'dealAmount').to_excel(writer, sheet_name='분양권(수정)', index=False)
+    # 수정된 피벗 시트
+    make_pivot(df_sale, '거래가액')  .to_excel(writer, sheet_name='매매(수정)', index=False)
+    make_pivot(df_rent, '보증금')     .to_excel(writer, sheet_name='전세(수정)', index=False)
+    make_pivot(df_silv, '거래가액').to_excel(writer, sheet_name='분양권(수정)', index=False)
 
 print(f"✅ '{args.output}' 에 저장되었습니다.")
