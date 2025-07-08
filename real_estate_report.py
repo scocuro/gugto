@@ -18,51 +18,32 @@ except Exception as e:
     sys.exit(1)
 
 def get_region_code(region_name: str) -> str:
-    """
-    region_name:
-      - '충청남도'
-      - '경상남도 진주시'
-      - '경기도 수원시 영통구'
-    반환: 5자리 시군구 코드 (법정동코드 앞 5자리)
-    """
     parts = region_name.split()
-    if len(parts) == 1:
-        # 광역시도 단위
-        sido = parts[0]
-        sub = csv_df[csv_df["시도명"] == sido]
-
-    elif len(parts) == 2:
-        # 시도 + 시군구
-        sido, sigungu = parts
-        sub = csv_df[
-            (csv_df["시도명"]    == sido) &
-            (csv_df["시군구명"] == sigungu)
-        ]
-
-    elif len(parts) == 3:
-        # 시도 + 시군구 + 읍면동
-        sido, sigungu, eummyundong = parts
+    sido = parts[0]
+    if len(parts) == 2:
+        sigungu = parts[1]
         sub = csv_df[
             (csv_df["시도명"]    == sido) &
             (csv_df["시군구명"] == sigungu) &
-            (csv_df["읍면동명"] == eummyundong)
+            (csv_df["읍면동명"].isna())
         ]
-
+    elif len(parts) == 3:
+        full_sigungu = parts[1] + parts[2]
+        sub = csv_df[
+            (csv_df["시도명"]    == sido) &
+            (csv_df["시군구명"] == full_sigungu)
+        ]
     else:
-        raise ValueError("‘시도’, ‘시도 시군구’, ‘시도 시군구 읍면동’ 형식으로 입력해 주세요.")
-
+        raise ValueError("‘시도 시군구’ 또는 ‘시도 시군구 읍면동’ 형식으로 입력해 주세요.")
     if sub.empty:
         raise LookupError(f"'{region_name}'에 맞는 코드를 CSV에서 찾을 수 없습니다.")
-
-    code5 = sub.iloc[0]["법정동코드"][:5]
-    print(f"▶ 입력지역: {region_name} → 시군구코드: {code5}")
-    return code5
+    return sub.iloc[0]["법정동코드"][:5]
 
 # ── 2) CLI 파싱 ──
 parser = argparse.ArgumentParser(description="공공데이터 실거래 리포트 생성기")
 grp = parser.add_mutually_exclusive_group(required=True)
 grp.add_argument('--lawd-cd',     help='5자리 시군구코드를 직접 입력')
-grp.add_argument('--region-name', help='시도+시군구[+읍면동] 명칭')
+grp.add_argument('--region-name', help='시도+시군구 명칭 (예: 충청남도 천안시 동남구)')
 parser.add_argument('--start-year', type=int, default=2020, help='조회 시작 연도')
 parser.add_argument('--output',     default='report.xlsx', help='출력 엑셀 파일명')
 args = parser.parse_args()
@@ -77,7 +58,7 @@ else:
         print("ERROR:", e)
         sys.exit(1)
 
-# ── 이하 기존 코드 동일 ──
+# ── 4) API 키 & 엔드포인트 ──
 API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
 if not API_KEY:
     print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
@@ -85,13 +66,15 @@ if not API_KEY:
 
 BASE_SALE_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 BASE_RENT_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
-BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcAptSilvTrade"
+BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcSilvTrade"
 
+# ── 5) API 호출 + XML→DataFrame 헬퍼 ──
 def fetch_items(url, params):
     try:
         r = requests.get(url, params=params, timeout=30)
         r.raise_for_status()
     except Exception:
+        # 500/503 에러 등은 빈 리스트로 처리
         return []
     txt = r.text
     try:
@@ -100,6 +83,7 @@ def fetch_items(url, params):
         return []
     return df.to_dict(orient='records')
 
+# ── 6) 전체 데이터 수집 ──
 def collect_all(base_url, cols, date_key):
     today = datetime.today()
     rows = []
@@ -121,7 +105,9 @@ def collect_all(base_url, cols, date_key):
                 if not recs:
                     break
                 df = pd.DataFrame(recs)
+                # 필요한 컬럼만 선택
                 df = df.loc[:, [*cols, 'dealYear','dealMonth','dealDay']]
+                # 숫자형 변환
                 if 'dealAmount' in df:
                     df['dealAmount'] = df['dealAmount'].astype(str).str.replace(',','',regex=False).astype(float)
                 if 'deposit' in df:
@@ -139,10 +125,19 @@ def collect_all(base_url, cols, date_key):
                 page += 1
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
-sale_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYear']
-rent_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','deposit','monthlyRent','contractType']
-silv_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount']
+# ── 7) 컬럼 리스트 정의 ──
+sale_cols = [
+    'sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYear'
+]
+rent_cols = [
+    'sggCd','umdNm','aptNm','jibun','excluUseAr',
+    'deposit','monthlyRent','contractType'
+]
+silv_cols = [
+    'sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount'
+]
 
+# ── 8) 실제 수집 ──
 print("▶ 매매 수집…");   df_sale = collect_all(BASE_SALE_URL, sale_cols, 'DEAL_YMD')
 print(f"  → {len(df_sale)}건 수집 완료")
 print("▶ 전월세 수집…"); df_rent = collect_all(BASE_RENT_URL, rent_cols, 'DEAL_YMD')
@@ -150,4 +145,48 @@ print(f"  → {len(df_rent)}건 수집 완료")
 print("▶ 분양권 수집…"); df_silv = collect_all(BASE_SILV_URL, silv_cols, 'DEAL_YMD')
 print(f"  → {len(df_silv)}건 수집 완료")
 
-# … 이하 피벗 만들고 엑셀 쓰는 부분 그대로 …
+# ── 9) 엑셀 작성 ──
+with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
+    # Raw 데이터
+    df_sale.to_excel(writer, sheet_name='매매(raw)',   index=False)
+    df_rent.to_excel(writer, sheet_name='전세(raw)',   index=False)
+    df_silv.to_excel(writer, sheet_name='분양권(raw)', index=False)
+
+    # 피벗 생성 함수
+    def make_pivot(df, valcol):
+        if df.empty:
+            return pd.DataFrame()
+        g = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
+        pv = g.agg(
+            case_count=('dealYear','size'),
+            avg_value =(valcol,    'mean'),
+            avg_exclu =('excluUseAr_adj','mean')
+        ).reset_index()
+        years = sorted(pv['dealYear'].unique())
+        # 결과 틀 잡기
+        out = pv[['umdNm','aptNm']].drop_duplicates().reset_index(drop=True)
+        new_cols = []
+        for y in years:
+            new_cols += [
+                f"case_count_{y}",
+                f"avg_value_{y}",
+                f"avg_exclu_{y}"
+            ]
+            sub = pv[pv['dealYear']==y]
+            out[f"case_count_{y}"] = out.merge(sub[['umdNm','aptNm','case_count']],
+                                              on=['umdNm','aptNm'], how='left')['case_count']
+            out[f"avg_value_{y}"]  = out.merge(sub[['umdNm','aptNm','avg_value']],
+                                              on=['umdNm','aptNm'], how='left')['avg_value']
+            out[f"avg_exclu_{y}"]  = out.merge(sub[['umdNm','aptNm','avg_exclu']],
+                                              on=['umdNm','aptNm'], how='left')['avg_exclu']
+        return out[['umdNm','aptNm'] + new_cols]
+
+    # 수정된 피벗 시트
+    make_pivot(df_sale, 'dealAmount')\
+        .to_excel(writer, sheet_name='매매(수정)', index=False)
+    make_pivot(df_rent, 'deposit')\
+        .to_excel(writer, sheet_name='전세(수정)', index=False)
+    make_pivot(df_silv, 'dealAmount')\
+        .to_excel(writer, sheet_name='분양권(수정)', index=False)
+
+print(f"✅ '{args.output}' 에 저장되었습니다.")
