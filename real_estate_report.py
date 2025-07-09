@@ -45,11 +45,11 @@ parser = argparse.ArgumentParser(description="공공데이터 실거래 리포�
 grp = parser.add_mutually_exclusive_group(required=True)
 grp.add_argument('--lawd-cd',     help='5자리 시군구코드를 직접 입력')
 grp.add_argument('--region-name', help='시도+시군구 명칭 (예: 충청남도 천안시 동남구)')
-parser.add_argument('--start',     required=True,              help='조회 시작 시점 (YYYYMM)')
-parser.add_argument('--end',       default=None,               help='조회 종료 시점 (YYYYMM), 미지정 시 현재월')
-parser.add_argument('--min-area',  type=float, default=None,   help='조회 최소 면적 (㎡)')
-parser.add_argument('--max-area',  type=float, default=None,   help='조회 최대 면적 (㎡)')
-parser.add_argument('--output',    default='report.xlsx',      help='출력 엑셀 파일명')
+parser.add_argument('--start',     required=True,            help='조회 시작 시점 (YYYYMM)')
+parser.add_argument('--end',       default=None,             help='조회 종료 시점 (YYYYMM), 미지정 시 현재월')
+parser.add_argument('--min-area',  type=float, default=None, help='조회 최소 면적 (㎡)')
+parser.add_argument('--max-area',  type=float, default=None, help='조회 최대 면적 (㎡)')
+parser.add_argument('--output',    default='report.xlsx',    help='출력 엑셀 파일명')
 args = parser.parse_args()
 
 # ── 4) 시군구코드 결정 ──
@@ -126,12 +126,10 @@ def collect_all(base_url, cols, date_key):
                           .str.replace(',','',regex=False)
                           .astype(float)
                     )
-                    # 사용자 지정 면적 범위 적용
                     if args.min_area is not None:
                         df = df[df['excluUseAr'] >= args.min_area]
                     if args.max_area is not None:
                         df = df[df['excluUseAr'] <= args.max_area]
-                    # 평단위 보정값
                     df['excluUseAr_adj'] = df['excluUseAr'] * 121/400
 
                 # 금액/보증금/월세 숫자 변환
@@ -180,21 +178,35 @@ print("▶ 분양권 수집…")
 df_silv = collect_all(BASE_SILV_URL, silv_cols, 'DEAL_YMD')
 print(f"  → {len(df_silv)}건 수집 완료")
 
-# ── 11) 연도별 컬럼 확장 피벗 ──
+# ── 11) 연도별 컬럼 확장 피벗 (연도별로 메트릭 묶음 순서 재정렬) ──
 def make_pivot(df, valcol):
     if df.empty:
         return pd.DataFrame()
-    df2 = df.copy()
-    if 'excluUseAr_adj' not in df2.columns:
-        df2['excluUseAr_adj'] = pd.NA
-    agg = df2.groupby(['umdNm','aptNm','dealYear']).agg(
-        거래건수=('dealYear','size'),
-        평균거래가액=(valcol,'mean'),
-        평균전용면적=('excluUseAr_adj','mean')
-    ).reset_index()
+    # 1) 년도별 집계
+    agg = (
+        df.groupby(['umdNm','aptNm','dealYear'])
+          .agg(
+            거래건수=('dealYear','size'),
+            평균거래가액      =(valcol,'mean'),
+            평균전용면적      =('excluUseAr_adj','mean')
+          )
+          .reset_index()
+    )
+    # 2) 피벗
     pv = agg.pivot(index=['umdNm','aptNm'], columns='dealYear')
-    pv.columns = [f"{str(year)[-2:]}_{metric}" for metric, year in pv.columns]
-    return pv.reset_index()
+    # 3) 플랫 이름 생성
+    #    메트릭 순서: 거래건수, 평균거래가액, 평균전용면적
+    metrics = ['거래건수','평균거래가액','평균전용면적']
+    years   = sorted(agg['dealYear'].unique())
+    flat_names = []
+    for year in years:
+        y2 = str(year)[-2:]
+        for m in metrics:
+            flat_names.append(f"{y2}_{m}")
+    pv.columns = flat_names
+    # 4) 인덱스를 컬럼으로 복구하고 재정렬
+    pv = pv.reset_index()
+    return pv[['umdNm','aptNm'] + flat_names]
 
 # ── 12) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
