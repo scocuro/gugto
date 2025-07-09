@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import datetime
 from io import StringIO
 
-# ── 1) 시 군 구 코드 CSV 로드 ──
+# ── 1) 시군구 코드 CSV 로드 ──
 CSV_PATH = "code_raw.csv"
 try:
     csv_df = pd.read_csv(CSV_PATH, encoding="euc-kr", dtype=str)
@@ -178,35 +178,37 @@ print("▶ 분양권 수집…")
 df_silv = collect_all(BASE_SILV_URL, silv_cols, 'DEAL_YMD')
 print(f"  → {len(df_silv)}건 수집 완료")
 
-# ── 11) 연도별 컬럼 확장 피벗 (연도별로 메트릭 묶음 순서 재정렬) ──
+# ── 11) 연도별 컬럼 확장 피벗 (연도별 메트릭 묶음 순서 재정렬) ──
 def make_pivot(df, valcol):
     if df.empty:
         return pd.DataFrame()
-    # 1) 년도별 집계
-    agg = (
-        df.groupby(['umdNm','aptNm','dealYear'])
-          .agg(
-            거래건수=('dealYear','size'),
-            평균거래가액      =(valcol,'mean'),
-            평균전용면적      =('excluUseAr_adj','mean')
-          )
-          .reset_index()
-    )
-    # 2) 피벗
-    pv = agg.pivot(index=['umdNm','aptNm'], columns='dealYear')
-    # 3) 플랫 이름 생성
-    #    메트릭 순서: 거래건수, 평균거래가액, 평균전용면적
-    metrics = ['거래건수','평균거래가액','평균전용면적']
+    # 1) 집계
+    agg = df.groupby(['umdNm','aptNm','dealYear']).agg(
+        거래건수=('dealYear','size'),
+        평균거래가액=(valcol,'mean'),
+        평균전용면적=('excluUseAr_adj','mean')
+    ).reset_index()
+
     years   = sorted(agg['dealYear'].unique())
-    flat_names = []
+    metrics = ['거래건수','평균거래가액','평균전용면적']
+
+    # 2) 피벗 (metrics→dealYear), swaplevel → (dealYear, metrics)
+    pv = agg.pivot_table(index=['umdNm','aptNm'],
+                         columns='dealYear',
+                         values=metrics)
+    pv = pv.swaplevel(0,1, axis=1)
+    pv = pv.sort_index(axis=1, level=0)
+
+    # 3) 플랫 컬럼명 생성
+    flat_cols = []
     for year in years:
         y2 = str(year)[-2:]
         for m in metrics:
-            flat_names.append(f"{y2}_{m}")
-    pv.columns = flat_names
-    # 4) 인덱스를 컬럼으로 복구하고 재정렬
+            flat_cols.append(f"{y2}_{m}")
+
+    pv.columns = flat_cols
     pv = pv.reset_index()
-    return pv[['umdNm','aptNm'] + flat_names]
+    return pv[['umdNm','aptNm'] + flat_cols]
 
 # ── 12) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
