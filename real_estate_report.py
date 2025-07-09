@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# real_estate_report.py
+# real_estate_report.py (with debug logging)
 
 import argparse
 import os
@@ -8,11 +8,13 @@ import requests
 import pandas as pd
 from datetime import datetime
 from io import StringIO
+from xml.etree import ElementTree as ET
 
 # ── 1) 시군구 코드 CSV 로드 ──
 CSV_PATH = "code_raw.csv"
 try:
-    csv_df = pd.read_csv(CSV_PATH, encoding="euc-kr", dtype=str)
+    # CP949 인코딩 파일도 처리하도록
+    csv_df = pd.read_csv(CSV_PATH, encoding='cp949', dtype=str)
 except Exception as e:
     print(f"ERROR: 시군구 코드 CSV를 불러오는 데 실패했습니다 ({CSV_PATH}): {e}")
     sys.exit(1)
@@ -37,10 +39,12 @@ def get_region_code(region_name: str) -> str:
         raise ValueError("‘시도 시군구’ 또는 ‘시도 시군구 읍면동’ 형식으로 입력해 주세요.")
     if sub.empty:
         raise LookupError(f"'{region_name}'에 맞는 코드를 CSV에서 찾을 수 없습니다.")
-    return sub.iloc[0]["법정동코드"][:5]
+    code5 = sub.iloc[0]["법정동코드"][:5]
+    print(f"[DEBUG] get_region_code: 매칭된 5자리 법정동코드={code5}")
+    return code5
 
 # ── 2) CLI 파싱 ──
-parser = argparse.ArgumentParser(description="공공데이터 실거래 리포트 생성기")
+parser = argparse.ArgumentParser(description="공공데이터 실거래 리포트 생성기 (디버그 모드)")
 grp = parser.add_mutually_exclusive_group(required=True)
 grp.add_argument('--lawd-cd',     help='5자리 시군구코드를 직접 입력')
 grp.add_argument('--region-name', help='시도+시군구 명칭 (예: 충청남도 천안시 동남구)')
@@ -58,40 +62,56 @@ else:
         print("ERROR:", e)
         sys.exit(1)
 
+print(f"[DEBUG] Using LAWD_CD = {region_code}")
+
 # ── 4) API 키 & 엔드포인트 ──
-API_KEY = os.getenv('PUBLIC_DATA_API_KEY')
+API_KEY = os.getenv('PUBLIC_DATA_API_KEY') or os.getenv('MOLIT_STATS_KEY')
 if not API_KEY:
-    print("ERROR: PUBLIC_DATA_API_KEY 환경변수를 설정하세요.")
+    print("ERROR: PUBLIC_DATA_API_KEY 또는 MOLIT_STATS_KEY 환경변수를 설정하세요.")
     sys.exit(1)
 
 BASE_SALE_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 BASE_RENT_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
 BASE_SILV_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcSilvTrade/getRTMSDataSvcSilvTrade"
 
-# ── 5) 컬럼 매핑 정의 ──
-COL_MAP = {
-    'sggNm': '시군구', 'sggCd': '시군구코드', 'umdNm': '동',
-    'aptNm': '건물명', 'jibun': '지번', 'excluUseAr': '전용면적',
-    'dealAmount': '거래가액', 'buildYear': '준공년',
-    'dealYear': '거래년도', 'dealMonth': '거래월', 'dealDay': '거래일',
-    'excluUseAr_adj': '전용면적(평)',
-    'deposit': '보증금', 'monthlyRent': '월세'
-}
-
-# ── 6) API 호출 + XML→DataFrame 헬퍼 ──
+# ── 5) API 호출 + XML→DataFrame 헬퍼 ──
 def fetch_items(url, params):
+    print(f"[DEBUG] fetch_items 호출: URL={url}\n          params={params}")
     try:
         r = requests.get(url, params=params, timeout=30)
+        print(f"[DEBUG] 요청 전체 URL: {r.url}")
         r.raise_for_status()
-    except Exception:
+    except Exception as e:
+        print(f"[DEBUG] HTTP 요청 에러: {e}")
         return []
+
+    txt = r.text
+    print(f"[DEBUG] 응답 상태={r.status_code}, Content-Type={r.headers.get('Content-Type')}")
+    # XML 헤더 정보 파싱
     try:
-        df = pd.read_xml(StringIO(r.text), xpath='.//item', parser='etree')
+        root = ET.fromstring(txt)
+        hdr = root.find('.//header')
+        if hdr is not None:
+            code = hdr.findtext('resultCode') or hdr.findtext('returnReasonCode')
+            msg  = hdr.findtext('resultMsg')  or hdr.findtext('returnAuthMsg')
+            print(f"[DEBUG] XML header resultCode={code}, resultMsg={msg}")
     except Exception:
+        print("[DEBUG] XML header 파싱 실패")
+
+    # items 존재 여부
+    if '<items/>' in txt or '<items />' in txt:
+        print("[DEBUG] body에 items 없음")
+        return []
+
+    try:
+        df = pd.read_xml(StringIO(txt), xpath='.//item', parser='etree')
+        print(f"[DEBUG] 파싱된 레코드 수: {len(df)}")
+    except Exception as e:
+        print(f"[DEBUG] XML 파싱 에러: {e}")
         return []
     return df.to_dict(orient='records')
 
-# ── 7) 전체 데이터 수집 ──
+# ── 6) 전체 데이터 수집 ──
 def collect_all(base_url, cols, date_key):
     today = datetime.today()
     rows = []
@@ -100,7 +120,9 @@ def collect_all(base_url, cols, date_key):
         for mm in range(1, max_m+1):
             ymd = f"{yy}{mm:02d}"
             page = 1
+            print(f"[DEBUG] collect_all: 시작 ymd={ymd}")
             while True:
+                print(f"[DEBUG] collect_all: page={page}")
                 params = {
                     'serviceKey': API_KEY,
                     'LAWD_CD':    region_code,
@@ -111,36 +133,20 @@ def collect_all(base_url, cols, date_key):
                 }
                 recs = fetch_items(base_url, params)
                 if not recs:
+                    print(f"[DEBUG] {ymd} page {page} 종료 (데이터 없음)")
                     break
                 df = pd.DataFrame(recs)
                 df = df.loc[:, [*cols, 'dealYear','dealMonth','dealDay']]
-                if 'dealAmount' in df:
-                    df['dealAmount'] = (
-                        df['dealAmount'].astype(str).str.replace(',','',regex=False).astype(float)
-                    )
-                if 'deposit' in df:
-                    df['deposit'] = (
-                        df['deposit'].astype(str).str.replace(',','',regex=False).astype(float)
-                    )
-                if 'monthlyRent' in df:
-                    df['monthlyRent'] = (
-                        df['monthlyRent'].astype(str).str.replace(',','',regex=False).astype(float)
-                    )
-                if 'excluUseAr' in df:
-                    df['excluUseAr_adj'] = (
-                        df['excluUseAr'].astype(str).str.replace(',','',regex=False).astype(float)
-                        * 121/400
-                    )
                 rows.append(df)
                 page += 1
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
-# ── 8) 컬럼 리스트 정의 ──
+# ── 7) 컬럼 리스트 정의 ──
 sale_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYear']
 rent_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','deposit','monthlyRent','contractType']
 silv_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount']
 
-# ── 9) 실제 수집 ──
+# ── 8) 실제 수집 ──
 print("▶ 매매 수집…");   df_sale = collect_all(BASE_SALE_URL, sale_cols, 'DEAL_YMD')
 print(f"  → {len(df_sale)}건 수집 완료")
 print("▶ 전월세 수집…"); df_rent = collect_all(BASE_RENT_URL, rent_cols, 'DEAL_YMD')
@@ -148,40 +154,33 @@ print(f"  → {len(df_rent)}건 수집 완료")
 print("▶ 분양권 수집…"); df_silv = collect_all(BASE_SILV_URL, silv_cols, 'DEAL_YMD')
 print(f"  → {len(df_silv)}건 수집 완료")
 
-# ── 10) 피벗 생성 함수 ──
-def make_pivot(df, valcol_eng):
-    years = sorted(df['dealYear'].unique())
-    g = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
-    pv = g.agg(
-        **{f'case_count_{y}': ('dealYear','size') for y in years},
-        **{f'avg_value_{y}': (valcol_eng,'mean') for y in years},
-        **{f'avg_exclu_{y}': ('excluUseAr_adj','mean') for y in years}
-    ).reset_index()
-    # 영어→한국어 매핑
-    rename_map = {
-        'umdNm': '동', 'aptNm': '건물명', 'dealYear': '거래년도'
-    }
-    for y in years:
-        rename_map[f'case_count_{y}'] = f'거래건수({y})'
-        rename_map[f'avg_value_{y}']   = f'평균 거래가액({y})'
-        rename_map[f'avg_exclu_{y}']   = f'평균 전용면적({y})'
-    return pv.rename(columns=rename_map)
-
-# ── 11) 엑셀 작성 ──
+# ── 9) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    # 11-1) raw 시트
-    for df, name in [(df_sale,'매매(raw)'), (df_rent,'전세(raw)'), (df_silv,'분양권(raw)')]:
-        df.rename(columns=COL_MAP).to_excel(writer, sheet_name=name, index=False)
+    df_sale.to_excel(writer, sheet_name='매매(raw)',   index=False)
+    df_rent.to_excel(writer, sheet_name='전세(raw)',   index=False)
+    df_silv.to_excel(writer, sheet_name='분양권(raw)', index=False)
 
-    # 11-2) pivot 시트 — 빈 데이터일 땐 건너뛰기
-    if not df_sale.empty:
-        make_pivot(df_sale, 'dealAmount')  \
-            .to_excel(writer, sheet_name='매매(수정)', index=False)
-    if not df_rent.empty:
-        make_pivot(df_rent, 'deposit')    \
-            .to_excel(writer, sheet_name='전세(수정)', index=False)
-    if not df_silv.empty:
-        make_pivot(df_silv, 'dealAmount') \
-            .to_excel(writer, sheet_name='분양권(수정)', index=False)
+    # 피벗 생성 함수 (기존 로직 그대로 유지)
+    def make_pivot(df, valcol):
+        if df.empty:
+            return pd.DataFrame()
+        g = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
+        pv = (g.agg(
+            case_count=('dealYear','size'),
+            avg_value =(valcol,    'mean'),
+            avg_exclu =('excluUseAr_adj','mean')
+        ).reset_index())
+        years = sorted(pv['dealYear'].unique())
+        out = pv[['umdNm','aptNm']].drop_duplicates().reset_index(drop=True)
+        for y in years:
+            sub = pv[pv['dealYear']==y]
+            out[f"case_count_{y}"] = out.merge(sub[['umdNm','aptNm','case_count']], on=['umdNm','aptNm'], how='left')['case_count']
+            out[f"avg_value_{y}"]  = out.merge(sub[['umdNm','aptNm','avg_value']],  on=['umdNm','aptNm'], how='left')['avg_value']
+            out[f"avg_exclu_{y}"]  = out.merge(sub[['umdNm','aptNm','avg_exclu']],  on=['umdNm','aptNm'], how='left')['avg_exclu']
+        return out
 
-print(f"✅ '{args.output}'에 저장되었습니다.")
+    make_pivot(df_sale, 'dealAmount').to_excel(writer, sheet_name='매매(수정)', index=False)
+    make_pivot(df_rent, 'deposit').to_excel(writer, sheet_name='전세(수정)', index=False)
+    make_pivot(df_silv, 'dealAmount').to_excel(writer, sheet_name='분양권(수정)', index=False)
+
+print(f"✅ '{args.output}' 에 저장되었습니다.")
