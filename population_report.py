@@ -11,7 +11,7 @@ from datetime import datetime
 # ── 1) 시군구 코드 CSV 로드 ──
 CSV_PATH = "code_raw.csv"
 try:
-    csv_df = pd.read_csv(CSV_PATH, encoding="utf-8", dtype=str)
+    csv_df = pd.read_csv(CSV_PATH, encoding="euc-kr", dtype=str)
 except Exception as e:
     print(f"ERROR: 시군구 코드 CSV를 불러오는 데 실패했습니다 ({CSV_PATH}): {e}")
     sys.exit(1)
