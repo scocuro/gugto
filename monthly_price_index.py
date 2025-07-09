@@ -178,7 +178,7 @@ df_summary = df_full[['지역'] + summary_periods]
 # ── 11) 엑셀 저장 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
     df_full.to_excel(writer, sheet_name='전체', index=False)
-    df_summary.to_excel(writer, sheet_name='연말_최신', index=False)
+    df_summary.to_excel(writer, sheet_name='요약', index=False)
 
 print(f">>> DEBUG: 엑셀 작성 완료: {args.output!r}")
 print(f"✅ '{args.output}'에 저장되었습니다.")
