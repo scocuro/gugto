@@ -25,18 +25,14 @@ on:
         description: '시도[ 시군구[ 읍면동]] (예: 경상남도 진주시)'
         required: true
         default: '경상남도 진주시'
-      start_year:
-        description: '실거래 시작 연도 (YYYY)'
-        required: false
-        default: '2020'
       start:
-        description: '미분양/인구/지수 시작 기간 (YYYYMM)'
+        description: '조회 시작 시점 (YYYYMM)'
         required: false
-        default: '202501'
+        default: '202001'
       end:
-        description: '미분양/인구/지수 종료 기간 (YYYYMM)'
+        description: '조회 종료 시점 (YYYYMM)'
         required: false
-        default: '202505'
+        default: '202512'
 
 jobs:
   collect:
@@ -74,7 +70,8 @@ jobs:
               OUT1="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
                 --region-name "${REGION}" \
-                --start-year "${{ github.event.inputs.start_year }}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
                 --output "${OUT1}"
 
               # 2) 미분양
@@ -106,7 +103,8 @@ jobs:
               OUT="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
                 --region-name "${REGION}" \
-                --start-year "${{ github.event.inputs.start_year }}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
                 --output "${OUT}"
               ;;
 
