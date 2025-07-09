@@ -64,7 +64,7 @@ def get_cls_id(label: str) -> str:
     sub = code_df[code_df['분류명'] == label]
     if sub.empty:
         raise LookupError(f"CSV에서 '{label}' 코드 미발견")
-    cls_id = str(sub['법정동코드'].iloc[0])
+    cls_id = str(sub['지역코드'].iloc[0])
     print(f">>> DEBUG: label='{label}' → cls_id='{cls_id}'")
     return cls_id
 
