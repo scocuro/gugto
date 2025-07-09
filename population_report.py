@@ -188,8 +188,39 @@ def keep(r):
 df = df[df.apply(keep, axis=1)].reset_index(drop=True)
 print(f"  → 필터 후 {len(df)}건")
 
-# ── 10) 엑셀 저장 ──
-with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df.to_excel(writer, sheet_name='인구_세대', index=False)
+ # ── 11) 연말 + 최신 요약 시트 만들기 ──
+ # region 레벨별 라벨 추출
+ parts = args.region_name.split()
+ prov = parts[0]
+ labels = [prov]
+ if len(parts) >= 2:
+    labels.append(parts[1])
+ if len(parts) == 3:
+    labels.append(parts[2])
 
-print(f"✅ '{args.output}' 에 저장되었습니다.")
+ # 전체 시점, 연말(12월) 및 최신(최대) 추출
+ all_dates = sorted(df["시점"].astype(str).unique())
+ year_ends = [d for d in all_dates if d.endswith("12") and args.start <= d <= args.end]
+ year_ends.sort()
+ latest = max(all_dates)
+ summary_dates = year_ends + ([latest] if latest not in year_ends else [])
+
+ # 요약용 dict 생성
+ summary = {"시점": summary_dates}
+ for lbl in labels:
+    if lbl == prov:
+        cond = (df["시도"] == prov) & (df["시군구"].isna() | (df["시군구"] == ""))
+    else:
+        cond = df["시군구"] == lbl
+    sub = df[cond].set_index("시점")
+    for metric in ["인구 수", "세대 수", "세대당 인구 수"]:
+        key = f"{lbl}_{metric}"
+        summary[key] = [sub.at[d, metric] if d in sub.index else pd.NA for d in summary_dates]
+ df_summary = pd.DataFrame(summary)
+
+ # Excel에 쓰기 (원본 + 요약)
+ with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
+    df.to_excel(writer, sheet_name='인구_세대', index=False)
+    df_summary.to_excel(writer, sheet_name='요약', index=False)
+
+ print(f"✅ '{args.output}' 에 저장되었습니다.")
