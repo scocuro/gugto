@@ -75,9 +75,9 @@ parser.add_argument('--output',      default='price_index.xlsx', help='출력 �
 args = parser.parse_args()
 
 # 6) API 키 확인
-API_KEY = os.getenv('REB_KEY')
+API_KEY = os.getenv('REB_API_KEY')
 if not API_KEY:
-    print("ERROR: REB_KEY 환경변수를 설정하세요.")
+    print("ERROR: REB_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
 
 BASE_URL      = "https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do"
