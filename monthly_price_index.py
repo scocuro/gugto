@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# monthly_price_index.py  (월별 매매가격 지수; STATBL_ID=A_2024_00178) (debug)
+# monthly_price_index.py  (월별 매매가격 지수; STATBL_ID=A_2024_00178)
 
 import argparse
 import os
@@ -19,7 +19,7 @@ except Exception as e:
     sys.exit(1)
 
 # 2) 시도 전체명 → 약어 매핑
-do_map = {
+sido_map = {
     "서울특별시": "서울", "서울시": "서울", "서울": "서울",
     "부산광역시": "부산", "부산시": "부산", "부산": "부산",
     "대구광역시": "대구", "대구시": "대구", "대구": "대구",
@@ -40,9 +40,9 @@ do_map = {
 }
 
 def map_sido(full_name: str) -> str:
-    if full_name in do_map:
-        return do_map[full_name]
-    for k, v in do_map.items():
+    if full_name in sido_map:
+        return sido_map[full_name]
+    for k, v in sido_map.items():
         if full_name.startswith(k):
             return v
     raise ValueError(f"알 수 없는 시도명: '{full_name}'")
@@ -50,8 +50,7 @@ def map_sido(full_name: str) -> str:
 # 3) 반환할 지역 라벨 목록 생성
 def get_region_labels(region_name: str) -> list:
     parts = region_name.split()
-    sido_full = parts[0]
-    sido = map_sido(sido_full)
+    sido = map_sido(parts[0])
     labels = ["전국", "수도권", "지방권", sido]
     if len(parts) >= 2:
         labels.append(f"{sido} {parts[1]}")
@@ -119,9 +118,8 @@ for label in region_labels:
     try:
         resp = requests.get(BASE_URL, params=params, timeout=30)
         resp.raise_for_status()
-        print(f">>> DEBUG: 응답 URL: {resp.url}")
-        print(f">>> DEBUG: 응답 상태 코드: {resp.status_code}, content-type={resp.headers.get('Content-Type')}")
-        print(f">>> DEBUG: 응답 텍스트 프리뷰: {resp.text[:200]!r}")
+        print(f">>> DEBUG: 응답 상태 코드={resp.status_code}, content-type={resp.headers.get('Content-Type')}")
+        print(f">>> DEBUG: 응답 텍스트 프리뷰={resp.text[:200]!r}")
     except Exception as e:
         print(f">>> ERROR: 요청 실패 for '{label}': {e}")
         continue
@@ -147,20 +145,36 @@ if not dfs:
     print("ERROR: 수집된 데이터가 없습니다.")
     sys.exit(1)
 
-# 8) 병합 및 정렬
+# 8) 병합 및 전치
 print(f">>> DEBUG: 병합할 데이터프레임 수={len(dfs)}")
-df_all = reduce(lambda left, right: pd.merge(left, right, on='연월', how='outer'), dfs)
+df_all = reduce(lambda l, r: pd.merge(l, r, on='연월', how='outer'), dfs)
 df_all = df_all.sort_values('연월').reset_index(drop=True)
-print(f">>> DEBUG: 최종 데이터프레임 shape={df_all.shape}")
+print(f">>> DEBUG: 최종 df_all shape={df_all.shape}")
 
-# 9) 행/열 전환
-print(">>> DEBUG: 행/열 전환 중")
-df_t = df_all.set_index('연월').T
-df_t.index.name = '지역'
-print(f">>> DEBUG: 전치된 데이터프레임 shape={df_t.shape}")
+# (1) 전치된 전체 월별 지수
+df_trans = df_all.set_index('연월').T.reset_index().rename(columns={'index': '지역'})
+print(f">>> DEBUG: df_transposed shape={df_trans.shape}")
 
-# 10) 엑셀 저장 (원본 시트 없이 전치 시트만)
+# (2) 연말 및 최신 요약 계산
+start_year = int(args.start[:4])
+end_year   = int(args.end[:4])
+# 각 연도 12월, 그리고 마지막 조회 월
+summary_months = [f"{y}12" for y in range(start_year, end_year)]
+summary_months.append(args.end)
+print(f">>> DEBUG: 요약 대상 연월 리스트={summary_months!r}")
+
+# 요약용 DF: 원본 df_all에서 해당 연월만 추출
+df_sum = df_all[df_all['연월'].isin(summary_months)].copy()
+# 보기 편하게 "YYYY.MM"으로 포맷
+df_sum['연월'] = df_sum['연월'].apply(lambda x: f"{x[:4]}.{x[4:]}")
+# 전치하여 행=지역, 열=연월
+df_sum_t = df_sum.set_index('연월').T.reset_index().rename(columns={'index': '지역'})
+print(f">>> DEBUG: df_summary_t shape={df_sum_t.shape}")
+
+# 9) 엑셀 저장 (두 개 시트)
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df_t.to_excel(writer, sheet_name='매매가격지수', index=True)
+    df_trans.to_excel(writer, sheet_name='매매가격지수', index=False)
+    df_sum_t.to_excel(writer, sheet_name='연말 및 최신 요약', index=False)
+
 print(f">>> DEBUG: 엑셀 작성 완료: {args.output!r}")
 print(f"✅ '{args.output}'에 저장되었습니다.")
