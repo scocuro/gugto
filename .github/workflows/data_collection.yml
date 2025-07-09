@@ -1,3 +1,4 @@
+# .github/workflows/data-collection.yml
 name: 공공데이터 수집
 
 on:
@@ -6,10 +7,11 @@ on:
       data_type:
         description: >
           요청 데이터  
-          • all: All-in-one (실거래 + 미분양 + 인구)  
+          • all: All-in-one (실거래 + 미분양 + 인구 + 월별 매매가격 지수)  
           • real-estate: 실거래(매매,전월세,분양권)  
           • notsold: 미분양 현황  
           • population: 인구 현황  
+          • monthly-price-index: 월별 매매가격 지수  
         required: true
         type: choice
         default: 'all'
@@ -18,41 +20,46 @@ on:
           - real-estate
           - notsold
           - population
+          - monthly-price-index
       region_name:
         description: '시도[ 시군구[ 읍면동]] (예: 경상남도 진주시)'
         required: true
-        default: ''
+        default: '경상남도 진주시'
+      start_year:
+        description: '실거래 시작 연도 (YYYY)'
+        required: false
+        default: '2020'
       start:
-        description: '조회 시작 시점 (YYYYMM)'
+        description: '미분양/인구/지수 시작 기간 (YYYYMM)'
         required: false
-        default: ''
+        default: '202501'
       end:
-        description: '조회 종료 시점 (YYYYMM)'
+        description: '미분양/인구/지수 종료 기간 (YYYYMM)'
         required: false
-        default: ''
-      min_area_sqm:
-        description: '(선택) 실거래 조회 최소 전용면적 (㎡)'
-        required: false
-        default: ''
-      max_area_sqm:
-        description: '(선택) 실거래 조회 최대 전용면적 (㎡)'
-        required: false
-        default: ''
+        default: '202505'
 
 jobs:
   collect:
     runs-on: ubuntu-latest
+
     env:
       PYTHONPATH: ${{ github.workspace }}
       PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
       MOLIT_STATS_KEY:     ${{ secrets.MOLIT_STATS_KEY }}
       POP_KEY:             ${{ secrets.POP_KEY }}
+      REB_KEY:             ${{ secrets.REB_KEY }}
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with: { python-version: '3.x' }
-      - run: |
+      - name: 코드 체크아웃
+        uses: actions/checkout@v3
+
+      - name: 파이썬 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: 의존성 설치
+        run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
@@ -60,40 +67,84 @@ jobs:
         run: |
           TYPE="${{ github.event.inputs.data_type }}"
           REGION="${{ github.event.inputs.region_name }}"
-          START="${{ github.event.inputs.start }}"
-          END="${{ github.event.inputs.end }}"
-          MIN_AREA="${{ github.event.inputs.min_area_sqm }}"
-          MAX_AREA="${{ github.event.inputs.max_area_sqm }}"
 
           case "${TYPE}" in
             all)
+              # 1) 실거래
               OUT1="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
                 --region-name "${REGION}" \
-                --start "${START}" \
-                --end   "${END}" \
-                ${MIN_AREA:+--min-area "${MIN_AREA}"} \
-                ${MAX_AREA:+--max-area "${MAX_AREA}"} \
+                --start-year "${{ github.event.inputs.start_year }}" \
                 --output "${OUT1}"
-              # ... notsold.py, population_report.py 는 그대로 start/end 사용 ...
+
+              # 2) 미분양
+              OUT2="미분양 현황_${REGION}.xlsx"
+              python notsold.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT2}"
+
+              # 3) 인구
+              OUT3="인구 현황_${REGION}.xlsx"
+              python population_report.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT3}"
+
+              # 4) 월별 매매가격 지수
+              OUT4="월별매매가격지수_${REGION}.xlsx"
+              python monthly_price_index.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT4}"
               ;;
+
             real-estate)
               OUT="국토교통부 실거래데이터_${REGION}.xlsx"
               python real_estate_report.py \
                 --region-name "${REGION}" \
-                --start "${START}" \
-                --end   "${END}" \
-                ${MIN_AREA:+--min-area "${MIN_AREA}"} \
-                ${MAX_AREA:+--max-area "${MAX_AREA}"} \
+                --start-year "${{ github.event.inputs.start_year }}" \
                 --output "${OUT}"
               ;;
+
             notsold)
-              # ...
+              OUT="미분양 현황_${REGION}.xlsx"
+              python notsold.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT}"
               ;;
+
             population)
-              # ...
+              OUT="인구 현황_${REGION}.xlsx"
+              python population_report.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT}"
+              ;;
+
+            monthly-price-index)
+              OUT="월별매매가격지수_${REGION}.xlsx"
+              python monthly_price_index.py \
+                --region-name "${REGION}" \
+                --start "${{ github.event.inputs.start }}" \
+                --end   "${{ github.event.inputs.end }}" \
+                --output "${OUT}"
+              ;;
+
+            *)
+              echo "지원하지 않는 data_type: ${TYPE}"
+              exit 1
               ;;
           esac
 
-      - uses: actions/upload-artifact@v4
-        with: { name: reports, path: '*.xlsx' }
+      - name: 결과 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: '*.xlsx'
