@@ -152,6 +152,7 @@ if not dfs:
 print(f">>> DEBUG: 병합할 DF 수={len(dfs)}")
 df_all = reduce(lambda l, r: pd.merge(l, r, on='연월', how='outer'), dfs)
 df_all = df_all.sort_values('연월').reset_index(drop=True)
+df_all['연월'] = df_all['연월'].astype(str)   # ← ensure 연월 is string
 print(f">>> DEBUG: df_all shape={df_all.shape}")
 
 # ── 9) 전체 시계열 행/열 전환 ──
@@ -160,7 +161,8 @@ print(f">>> DEBUG: 전체 전환 DF shape={df_full.shape}")
 
 # ── 10) 요약용: 연말 + 최신 합치기 ──
 # 연말(12월) 시점
-year_ends = sorted({ym for ym in df_all['연월'] if ym.endswith('12') and args.start <= ym <= args.end})
+year_ends = sorted(ym for ym in df_all['연월'] 
+                   if ym.endswith('12') and args.start <= ym <= args.end)
 print(f">>> DEBUG: 연말 시점: {year_ends!r}")
 # 최신 시점
 latest = max(df_all['연월'])
