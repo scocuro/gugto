@@ -21,15 +21,15 @@ on:
       region_name:
         description: '시도[ 시군구[ 읍면동]] (예: 경상남도 진주시)'
         required: true
-        default: '경상남도 진주시'
+        default: ''
       start:
         description: '조회 시작 시점 (YYYYMM)'
         required: false
-        default: '202001'
+        default: ''
       end:
         description: '조회 종료 시점 (YYYYMM)'
         required: false
-        default: '${{ github.event.inputs.start }}'
+        default: ''
       min_area_sqm:
         description: '(선택) 실거래 조회 최소 전용면적 (㎡)'
         required: false
