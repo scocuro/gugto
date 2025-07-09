@@ -17,11 +17,23 @@ BASE_URL = "http://stat.molit.go.kr/portal/openapi/service/rest/getList.do"
 
 # 입력된 시도명을 API의 '구분' 값으로 매핑
 PROVINCE_MAP = {
-    "서울특별시": "서울", "부산광역시": "부산", "대구광역시": "대구", "인천광역시": "인천",
-    "광주광역시": "광주", "대전광역시": "대전", "울산광역시": "울산", "세종특별자치시": "세종",
-    "경기도": "경기", "강원도": "강원", "충청북도": "충북", "충청남도": "충남",
-    "전라북도": "전북", "전라남도": "전남", "경상북도": "경북", "경상남도": "경남",
-    "제주특별자치도": "제주", "제주도": "제주",
+    "서울특별시": "서울", "서울시": "서울", "서울": "서울",
+    "부산광역시": "부산", "부산시": "부산", "부산": "부산",
+    "대구광역시": "대구", "대구시": "대구", "대구": "대구",
+    "인천광역시": "인천", "인천시": "인천", "인천": "인천",
+    "광주광역시": "광주", "광주시": "광주",
+    "대전광역시": "대전", "대전시": "대전",
+    "울산광역시": "울산", "울산시": "울산",
+    "세종특별자치시": "세종", "세종시": "세종", "세종": "세종",
+    "경기도": "경기", "경기": "경기",
+    "강원도": "강원", "강원": "강원",
+    "충청북도": "충북", "충북": "충북",
+    "충청남도": "충남", "충남": "충남",
+    "전라북도": "전북", "전북": "전북",
+    "전라남도": "전남", "전남": "전남",
+    "경상북도": "경북", "경북": "경북",
+    "경상남도": "경남", "경남": "경남",
+    "제주특별자치도": "제주", "제주도": "제주", "제주": "제주",
 }
 
 def parse_region(region_name: str):
@@ -113,12 +125,38 @@ def main():
             on="date", how="left"
         )
 
+    # -- summary: 연말(12월) 및 최신(month) 데이터만 모아서 하나의 시트로
+    # 모든 날짜 수집
+    all_dates = sorted({d for df in sheets.values() for d in df["date"].astype(str)})
+    # 연말(12월) 날짜
+    year_ends = [d for d in all_dates if d.endswith("12") and args.start <= d <= args.end]
+    year_ends = sorted(year_ends)
+    # 최신 날짜
+    latest = max(all_dates)
+    # 최종 요약 날짜 목록
+    summary_dates = year_ends + ([latest] if latest not in year_ends else [])
+
+    # 요약용 데이터프레임 생성
+    summary = {"date": summary_dates}
+    for name, df in sheets.items():
+        for col in ["미분양현황", "공사완료후미분양호수"]:
+            key = f"{name}_{col}"
+            # 날짜별 값을 매핑
+            mapping = df.set_index("date")[col].to_dict()
+            summary[key] = [mapping.get(d, pd.NA) for d in summary_dates]
+
+    df_summary = pd.DataFrame(summary)
+
     # Excel에 쓰기
     with pd.ExcelWriter(args.output) as writer:
+        # 개별 시트
         for name, df in sheets.items():
             df.to_excel(writer, sheet_name=name, index=False)
+        # 요약 시트
+        df_summary.to_excel(writer, sheet_name="요약", index=False)
 
     print(f"✅ '{args.output}' 생성 완료")
+
 
 if __name__ == "__main__":
     main()
