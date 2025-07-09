@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# real_estate_report.py (no debug logging, with start/end and area filters)
+# real_estate_report.py
 
 import argparse
 import os
@@ -38,18 +38,15 @@ def get_region_code(region_name: str) -> str:
         raise ValueError("‘시도 시군구’ 또는 ‘시도 시군구 읍면동’ 형식으로 입력해 주세요.")
     if sub.empty:
         raise LookupError(f"'{region_name}'에 맞는 코드를 CSV에서 찾을 수 없습니다.")
-    return sub.iloc[0]["법정동코드"][:5]
+    return sub.iloc[0]["법정동코드"][0:5]
 
 # ── 3) CLI 파싱 ──
 parser = argparse.ArgumentParser(description="공공데이터 실거래 리포트 생성기")
 grp = parser.add_mutually_exclusive_group(required=True)
 grp.add_argument('--lawd-cd',     help='5자리 시군구코드를 직접 입력')
 grp.add_argument('--region-name', help='시도+시군구 명칭 (예: 충청남도 천안시 동남구)')
-parser.add_argument('--start',     help='조회 시작 시점 (YYYYMM)', default=None)
-parser.add_argument('--end',       help='조회 종료 시점 (YYYYMM)', default=None)
-parser.add_argument('--min-area',  type=float, default=None, help='(선택) 최소 전용면적 (㎡)')
-parser.add_argument('--max-area',  type=float, default=None, help='(선택) 최대 전용면적 (㎡)')
-parser.add_argument('--output',    default='report.xlsx', help='출력 엑셀 파일명')
+parser.add_argument('--start-year', type=int, default=2020, help='조회 시작 연도')
+parser.add_argument('--output',     default='report.xlsx', help='출력 엑셀 파일명')
 args = parser.parse_args()
 
 # ── 4) 시군구코드 결정 ──
@@ -77,75 +74,54 @@ def fetch_items(url, params):
     try:
         r = requests.get(url, params=params, timeout=30)
         r.raise_for_status()
+        df = pd.read_xml(StringIO(r.text), xpath=".//item", parser="etree")
+        return df.to_dict(orient="records")
     except Exception:
         return []
-    try:
-        df = pd.read_xml(StringIO(r.text), xpath='.//item', parser='etree')
-    except Exception:
-        return []
-    return df.to_dict(orient='records')
 
-# ── 7) 전체 수집 함수 (with start/end and area filters) ──
-def collect_all(base_url, cols, date_key, start_ym, end_ym):
+# ── 7) 전체 수집 함수 ──
+def collect_all(base_url, cols, date_key):
+    today = datetime.today()
     all_rows = []
-    s_yy, s_mm = int(start_ym[:4]), int(start_ym[4:6])
-    e_yy, e_mm = int(end_ym[:4]),   int(end_ym[4:6])
-    yy, mm = s_yy, s_mm
-
-    while yy < e_yy or (yy == e_yy and mm <= e_mm):
-        ymd = f"{yy}{mm:02d}"
-        page = 1
-        while True:
-            params = {
-                'serviceKey': API_KEY,
-                'LAWD_CD':    region_code,
-                date_key:     ymd,
-                'pageNo':     page,
-                'numOfRows':  1000,
-                'resultType': 'xml'
-            }
-            recs = fetch_items(base_url, params)
-            if not recs:
-                break
-
-            df = pd.DataFrame(recs)
-            df = df.loc[:, [*cols, 'dealYear', 'dealMonth', 'dealDay']]
-
-            # 숫자형 변환
-            if 'dealAmount' in df:
-                df['dealAmount'] = (df['dealAmount']
-                    .astype(str).str.replace(',','',regex=False)
-                    .astype(float))
-            if 'deposit' in df:
-                df['deposit'] = (df['deposit']
-                    .astype(str).str.replace(',','',regex=False)
-                    .astype(float))
-            if 'monthlyRent' in df:
-                df['monthlyRent'] = (df['monthlyRent']
-                    .astype(str).str.replace(',','',regex=False)
-                    .astype(float))
-
-            if 'excluUseAr' in df:
-                df['excluUseAr'] = (df['excluUseAr']
-                    .astype(str).str.replace(',','',regex=False)
-                    .astype(float))
-                df['excluUseAr_adj'] = df['excluUseAr'] * 121/400
-
-                # 면적 필터링
-                if args.min_area is not None:
-                    df = df[df['excluUseAr'] >= args.min_area]
-                if args.max_area is not None:
-                    df = df[df['excluUseAr'] <= args.max_area]
-
-            all_rows.append(df)
-            page += 1
-
-        if mm == 12:
-            yy += 1
-            mm = 1
-        else:
-            mm += 1
-
+    for yy in range(args.start_year, today.year + 1):
+        max_m = today.month if yy == today.year else 12
+        for mm in range(1, max_m + 1):
+            ymd = f"{yy}{mm:02d}"
+            page = 1
+            while True:
+                params = {
+                    'serviceKey': API_KEY,
+                    'LAWD_CD':    region_code,
+                    date_key:     ymd,
+                    'pageNo':     page,
+                    'numOfRows':  1000,
+                    'resultType': 'xml'
+                }
+                recs = fetch_items(base_url, params)
+                if not recs:
+                    break
+                df = pd.DataFrame(recs)
+                df = df.loc[:, [*cols, 'dealYear', 'dealMonth', 'dealDay']]
+                # 숫자 변환
+                if 'dealAmount' in df:
+                    df['dealAmount'] = (
+                        df['dealAmount'].astype(str).str.replace(',','',regex=False).astype(float)
+                    )
+                if 'deposit' in df:
+                    df['deposit'] = (
+                        df['deposit'].astype(str).str.replace(',','',regex=False).astype(float)
+                    )
+                if 'monthlyRent' in df:
+                    df['monthlyRent'] = (
+                        df['monthlyRent'].astype(str).str.replace(',','',regex=False).astype(float)
+                    )
+                if 'excluUseAr' in df:
+                    df['excluUseAr_adj'] = (
+                        df['excluUseAr'].astype(str).str.replace(',','',regex=False).astype(float)
+                        * 121/400
+                    )
+                all_rows.append(df)
+                page += 1
     return pd.concat(all_rows, ignore_index=True) if all_rows else pd.DataFrame()
 
 # ── 8) 컬럼 리스트 정의 ──
@@ -153,44 +129,44 @@ sale_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount','buildYea
 rent_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','deposit','monthlyRent','contractType']
 silv_cols = ['sggCd','umdNm','aptNm','jibun','excluUseAr','dealAmount']
 
-# ── 9) 수집 범위 설정 ──
-today = datetime.today()
-start_ym = args.start if args.start else "202001"
-end_ym   = args.end   if args.end   else today.strftime("%Y%m")
-
-# ── 10) 데이터 수집 ──
+# ── 9) 데이터 수집 ──
 print("▶ 매매 수집…")
-df_sale = collect_all(BASE_SALE_URL, sale_cols, 'DEAL_YMD', start_ym, end_ym)
+df_sale = collect_all(BASE_SALE_URL, sale_cols, 'DEAL_YMD')
 print(f"  → {len(df_sale)}건 수집 완료")
 
 print("▶ 전월세 수집…")
-df_rent = collect_all(BASE_RENT_URL, rent_cols, 'DEAL_YMD', start_ym, end_ym)
+df_rent = collect_all(BASE_RENT_URL, rent_cols, 'DEAL_YMD')
 print(f"  → {len(df_rent)}건 수집 완료")
 
 print("▶ 분양권 수집…")
-df_silv = collect_all(BASE_SILV_URL, silv_cols, 'DEAL_YMD', start_ym, end_ym)
+df_silv = collect_all(BASE_SILV_URL, silv_cols, 'DEAL_YMD')
 print(f"  → {len(df_silv)}건 수집 완료")
+
+# ── 10) 연도별 컬럼 확장 피벗 ──
+def make_pivot(df, valcol):
+    if df.empty:
+        return pd.DataFrame()
+    df2 = df.copy()
+    if 'excluUseAr_adj' not in df2.columns:
+        df2['excluUseAr_adj'] = pd.NA
+    agg = df2.groupby(['umdNm','aptNm','dealYear']).agg(
+        거래건수=('dealYear','size'),
+        평균거래가액=(valcol,'mean'),
+        평균전용면적=('excluUseAr_adj','mean')
+    ).reset_index()
+    pv = agg.pivot(index=['umdNm','aptNm'], columns='dealYear')
+    # 컬럼명: "24_거래건수", "24_평균거래가액", "24_평균전용면적" …
+    pv.columns = [f"{str(year)[-2:]}_{metric}" for metric, year in pv.columns]
+    return pv.reset_index()
 
 # ── 11) 엑셀 작성 ──
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df_sale.to_excel(writer, sheet_name='매매(raw)',   index=False)
-    df_rent.to_excel(writer, sheet_name='전세(raw)',   index=False)
+    df_sale.to_excel(writer, sheet_name='매매(raw)', index=False)
+    df_rent.to_excel(writer, sheet_name='전세(raw)', index=False)
     df_silv.to_excel(writer, sheet_name='분양권(raw)', index=False)
 
-    def make_pivot(df, valcol):
-        if df.empty:
-            return pd.DataFrame()
-        g = df.groupby(['umdNm','aptNm','dealYear'], dropna=False)
-        agg_kwargs = {
-            '거래건수':       ('dealYear','size'),
-            '평균거래가액':   (valcol,'mean')
-        }
-        if 'excluUseAr_adj' in df.columns:
-            agg_kwargs['평균전용면적(평)'] = ('excluUseAr_adj','mean')
-        return g.agg(**agg_kwargs).reset_index()
-
-    make_pivot(df_sale, 'dealAmount').to_excel(writer, sheet_name='매매(수정)',   index=False)
-    make_pivot(df_rent, 'deposit').to_excel(writer, sheet_name='전세(수정)',   index=False)
+    make_pivot(df_sale, 'dealAmount').to_excel(writer, sheet_name='매매(수정)', index=False)
+    make_pivot(df_rent, 'deposit').to_excel(writer, sheet_name='전세(수정)', index=False)
     make_pivot(df_silv, 'dealAmount').to_excel(writer, sheet_name='분양권(수정)', index=False)
 
 print(f"✅ '{args.output}' 에 저장되었습니다.")
