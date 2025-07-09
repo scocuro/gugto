@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# monthly_price_index.py  (월별 매매가격 지수; STATBL_ID=A_2024_00178)
+# monthly_price_index.py  (월별 매매가격 지수; STATBL_ID=A_2024_00178) (debug)
 
 import argparse
 import os
@@ -19,7 +19,7 @@ except Exception as e:
     sys.exit(1)
 
 # 2) 시도 전체명 → 약어 매핑
-sido_map = {
+do_map = {
     "서울특별시": "서울", "서울시": "서울", "서울": "서울",
     "부산광역시": "부산", "부산시": "부산", "부산": "부산",
     "대구광역시": "대구", "대구시": "대구", "대구": "대구",
@@ -40,9 +40,9 @@ sido_map = {
 }
 
 def map_sido(full_name: str) -> str:
-    if full_name in sido_map:
-        return sido_map[full_name]
-    for k, v in sido_map.items():
+    if full_name in do_map:
+        return do_map[full_name]
+    for k, v in do_map.items():
         if full_name.startswith(k):
             return v
     raise ValueError(f"알 수 없는 시도명: '{full_name}'")
@@ -154,30 +154,13 @@ df_all = df_all.sort_values('연월').reset_index(drop=True)
 print(f">>> DEBUG: 최종 데이터프레임 shape={df_all.shape}")
 
 # 9) 행/열 전환
-print(f">>> DEBUG: 행/열 전환 시작")
-df_transposed = df_all.set_index('연월').T.reset_index().rename(columns={'index':'지역'})
-print(f">>> DEBUG: 전치된 데이터프레임 shape={df_transposed.shape}")
+print(">>> DEBUG: 행/열 전환 중")
+df_t = df_all.set_index('연월').T
+df_t.index.name = '지역'
+print(f">>> DEBUG: 전치된 데이터프레임 shape={df_t.shape}")
 
-# 10) 연말 및 최신 요약 생성
-print(f">>> DEBUG: 연말 및 최신 요약 시트 생성 시작")
-start_year = int(args.start[:4])
-end_year = int(args.end[:4])
-periods = []
-for y in range(start_year, end_year+1):
-    ym = f"{y}12"
-    if ym >= args.start and ym <= args.end:
-        periods.append(ym)
-if args.end not in periods:
-    periods.append(args.end)
-periods = sorted(set(periods))
-print(f">>> DEBUG: 요약 조회 연월 목록={periods}")
-summary_df = df_all[df_all['연월'].isin(periods)].copy().sort_values('연월').reset_index(drop=True)
-print(f">>> DEBUG: 요약 데이터프레임 shape={summary_df.shape}")
-
-# 11) 엑셀 저장
+# 10) 엑셀 저장 (원본 시트 없이 전치 시트만)
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df_all.to_excel(writer, sheet_name='매매가격지수_전체', index=False)
-    df_transposed.to_excel(writer, sheet_name='매매가격지수_전치', index=False)
-    summary_df.to_excel(writer, sheet_name='연말및최신', index=False)
+    df_t.to_excel(writer, sheet_name='매매가격지수', index=True)
 print(f">>> DEBUG: 엑셀 작성 완료: {args.output!r}")
 print(f"✅ '{args.output}'에 저장되었습니다.")
