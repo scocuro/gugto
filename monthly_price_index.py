@@ -7,8 +7,9 @@ import sys
 import requests
 import pandas as pd
 from io import StringIO
+from functools import reduce
 
-# ── 1) 지역코드 매핑 CSV 로드 ──
+# 1) 지역코드 매핑 CSV 로드
 CSV_PATH = "code_forprice.csv"
 try:
     code_df = pd.read_csv(CSV_PATH, encoding="euc-kr", skiprows=[0,1])
@@ -17,7 +18,7 @@ except Exception as e:
     print(f"ERROR: 매핑 CSV 불러오기 실패 ({CSV_PATH}): {e}")
     sys.exit(1)
 
-# ── 2) 시도 전체명 → 약어 매핑 ──
+# 2) 시도 전체명 → 약어 매핑
 sido_map = {
     "서울특별시": "서울", "서울시": "서울", "서울": "서울",
     "부산광역시": "부산", "부산시": "부산", "부산": "부산",
@@ -46,7 +47,7 @@ def map_sido(full_name: str) -> str:
             return v
     raise ValueError(f"알 수 없는 시도명: '{full_name}'")
 
-# ── 3) 반환할 지역 라벨 목록 생성 ──
+# 3) 반환할 지역 라벨 목록 생성
 def get_region_labels(region_name: str) -> list:
     parts = region_name.split()
     sido_full = parts[0]
@@ -58,47 +59,48 @@ def get_region_labels(region_name: str) -> list:
         labels.append(f"{sido} {parts[1]} {parts[2]}")
     return labels
 
-# ── 4) 레이블로부터 CLS_ID 추출 ──
+# 4) 레이블로부터 CLS_ID 추출
 def get_cls_id(label: str) -> str:
     sub = code_df[code_df['분류명'] == label]
     if sub.empty:
         raise LookupError(f"CSV에서 '{label}' 코드 미발견")
-    return str(sub['지역코드'].iloc[0])
+    cls_id = str(sub['지역코드'].iloc[0])
+    print(f">>> DEBUG: label='{label}' → cls_id='{cls_id}'")
+    return cls_id
 
-# ── 5) CLI 파싱 ──
-parser = argparse.ArgumentParser(description="월별 매매가격 지수 보고서 생성기")
+# 5) CLI 파싱
+parser = argparse.ArgumentParser(description="월별 매매가격 지수 보고서 생성기 (debug)")
 parser.add_argument('--region-name', required=True, help='시도[ 시군구[ 읍면동]]')
 parser.add_argument('--start',       required=True, help='조회 시작 시점 (YYYYMM)')
 parser.add_argument('--end',         required=True, help='조회 종료 시점 (YYYYMM)')
 parser.add_argument('--output',      default='price_index.xlsx', help='출력 엑셀 파일명')
 args = parser.parse_args()
-print(f">>> DEBUG: 입력 파라미터 region_name={args.region_name}, start={args.start}, end={args.end}, output={args.output}")
+print(f">>> DEBUG: 입력 파라미터 region_name={args.region_name!r}, start={args.start!r}, end={args.end!r}, output={args.output!r}")
 
-# ── 6) API 키 확인 ──
+# 6) API 키 확인
 API_KEY = os.getenv('REB_API_KEY')
 if not API_KEY:
     print("ERROR: REB_API_KEY 환경변수를 설정하세요.")
     sys.exit(1)
-print(">>> DEBUG: API_KEY 확인됨")
 
-# ── API 설정 ──
 BASE_URL    = "https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do"
 STATBL_ID   = "A_2024_00178"
 DTACYCLE_CD = "MM"
 ITM_ID      = "100001"
 
-# ── 7) 데이터 수집 ──
+# 7) 데이터 수집
 region_labels = get_region_labels(args.region_name)
-print(f">>> DEBUG: 생성된 지역 라벨 목록: {region_labels}")
+print(f">>> DEBUG: 생성된 지역 라벨 목록: {region_labels!r}")
+
 dfs = []
 for label in region_labels:
     print(f">>> DEBUG: 수집 시작: '{label}'")
     try:
         cls_id = get_cls_id(label)
-        print(f">>> DEBUG: label='{label}' → cls_id='{cls_id}'")
     except Exception as e:
-        print(f"WARNING: {e}, 건너뜁니다.")
+        print(f">>> WARNING: {e}, 건너뜁니다.")
         continue
+
     params = {
         'KEY':           API_KEY,
         'Type':          'xml',
@@ -111,41 +113,71 @@ for label in region_labels:
         'START_WRTTIME': args.start,
         'END_WRTTIME':   args.end,
     }
-    # 요청 로그
     print(f">>> DEBUG: 요청 URL={BASE_URL}")
-    masked = params.copy(); masked['KEY'] = '***'
-    print(f">>> DEBUG:     params={masked}")
+    print(f"    params={params}")
+
     try:
         resp = requests.get(BASE_URL, params=params, timeout=30)
+        resp.raise_for_status()
         print(f">>> DEBUG: 응답 URL: {resp.url}")
         print(f">>> DEBUG: 응답 상태 코드: {resp.status_code}, content-type={resp.headers.get('Content-Type')}")
-        preview = resp.text.replace('\n',' ')[:200]
-        print(f">>> DEBUG: 응답 텍스트 프리뷰: {preview!r}")
-        resp.raise_for_status()
-        temp = pd.read_xml(StringIO(resp.text), xpath='.//row', parser='etree')
-        print(f">>> DEBUG: parsed_records={len(temp)}")
+        print(f">>> DEBUG: 응답 텍스트 프리뷰: {resp.text[:200]!r}")
     except Exception as e:
-        print(f"ERROR: '{label}' 조회 실패: {e}")
+        print(f">>> ERROR: 요청 실패 for '{label}': {e}")
         continue
-    if 'WRTTIME_IDTFR_ID' not in temp.columns or 'DTA_VAL' not in temp.columns:
+
+    try:
+        temp = pd.read_xml(StringIO(resp.text), xpath='.//row', parser='etree')
+    except Exception as e:
+        print(f">>> ERROR: XML 파싱 실패 for '{label}': {e}")
         continue
-    tmp = temp[['WRTTIME_IDTFR_ID','DTA_VAL']].rename(columns={'WRTTIME_IDTFR_ID':'연월','DTA_VAL':label})
+
+    if temp.empty or 'DTA_VAL' not in temp.columns or 'WRTTIME_IDTFR_ID' not in temp.columns:
+        print(f">>> DEBUG: 데이터 없음 for '{label}', 건너뜁니다.")
+        continue
+
+    tmp = temp[['WRTTIME_IDTFR_ID', 'DTA_VAL']].rename(
+        columns={'WRTTIME_IDTFR_ID': '연월', 'DTA_VAL': label}
+    )
+    tmp[label] = pd.to_numeric(tmp[label], errors='coerce')
+    print(f">>> DEBUG: parsed rows for '{label}': {len(tmp)}")
     dfs.append(tmp)
 
 if not dfs:
     print("ERROR: 수집된 데이터가 없습니다.")
     sys.exit(1)
 
-# ── 8) 병합 및 정렬 ──
-from functools import reduce
-from pandas import DataFrame
-
+# 8) 병합 및 정렬
+print(f">>> DEBUG: 병합할 데이터프레임 수={len(dfs)}")
 df_all = reduce(lambda left, right: pd.merge(left, right, on='연월', how='outer'), dfs)
-df_all = df_all.sort_values('연월')
-print(f">>> DEBUG: 병합된 데이터 shape={df_all.shape}")
+df_all = df_all.sort_values('연월').reset_index(drop=True)
+print(f">>> DEBUG: 최종 데이터프레임 shape={df_all.shape}")
 
-# ── 9) 엑셀 저장 ──
+# 9) 행/열 전환
+print(f">>> DEBUG: 행/열 전환 시작")
+df_transposed = df_all.set_index('연월').T.reset_index().rename(columns={'index':'지역'})
+print(f">>> DEBUG: 전치된 데이터프레임 shape={df_transposed.shape}")
+
+# 10) 연말 및 최신 요약 생성
+print(f">>> DEBUG: 연말 및 최신 요약 시트 생성 시작")
+start_year = int(args.start[:4])
+end_year = int(args.end[:4])
+periods = []
+for y in range(start_year, end_year+1):
+    ym = f"{y}12"
+    if ym >= args.start and ym <= args.end:
+        periods.append(ym)
+if args.end not in periods:
+    periods.append(args.end)
+periods = sorted(set(periods))
+print(f">>> DEBUG: 요약 조회 연월 목록={periods}")
+summary_df = df_all[df_all['연월'].isin(periods)].copy().sort_values('연월').reset_index(drop=True)
+print(f">>> DEBUG: 요약 데이터프레임 shape={summary_df.shape}")
+
+# 11) 엑셀 저장
 with pd.ExcelWriter(args.output, engine='xlsxwriter') as writer:
-    df_all.to_excel(writer, sheet_name='매매가격지수', index=False)
-print(f">>> DEBUG: 엑셀 저장 완료: {args.output}")
+    df_all.to_excel(writer, sheet_name='매매가격지수_전체', index=False)
+    df_transposed.to_excel(writer, sheet_name='매매가격지수_전치', index=False)
+    summary_df.to_excel(writer, sheet_name='연말및최신', index=False)
+print(f">>> DEBUG: 엑셀 작성 완료: {args.output!r}")
 print(f"✅ '{args.output}'에 저장되었습니다.")
