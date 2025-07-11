@@ -85,7 +85,7 @@ if not API_KEY:
     sys.exit(1)
 
 BASE_URL    = "https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do"
-STATBL_ID   = "A_2024_00178"
+STATBL_ID   = "A_2024_00045"
 DTACYCLE_CD = "MM"
 ITM_ID      = "100001"
 
